@@ -1,0 +1,170 @@
+# Copyright (C) 2026 Mavida s.n.c.
+# This file is distributed under the same license as the Woo Multi Stock package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Woo Multi Stock 1.0.1\n"
+"Report-Msgid-Bugs-To: https://github.com/your-org/woo-multi-stock/issues\n"
+"POT-Creation-Date: 2026-02-27T12:00:00+00:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+"X-Generator: Claude Code\n"
+"X-Domain: woo-multi-stock\n"
+
+#. translators: 1: plugin name  2: required PHP version  3: current PHP version
+#: woo-multi-stock.php:53
+msgid "%1$s requires PHP %2$s or higher. You are running PHP %3$s. Please upgrade PHP or deactivate the plugin."
+msgstr ""
+
+#. translators: %s: WooCommerce plugin name in bold
+#: woo-multi-stock.php:187
+msgid "<strong>Woo Multi Stock</strong> requires %s to be installed and active."
+msgstr ""
+
+#: includes/Class-Admin.php:111
+msgid "Multi Stock Sync"
+msgstr ""
+
+#: includes/Class-Admin.php:112
+msgid "Multi Stock"
+msgstr ""
+
+#: includes/Class-Admin.php:137
+msgid "Display name for this warehouse / magazzino."
+msgstr ""
+
+#: includes/Class-Admin.php:149
+msgid "Full URL of the remote CSV file (must be publicly accessible or use HTTP Basic Auth)."
+msgstr ""
+
+#: includes/Class-Admin.php:159
+msgid "Warehouse Configuration"
+msgstr ""
+
+#: includes/Class-Admin.php:167
+msgid "Warehouse Name"
+msgstr ""
+
+#: includes/Class-Admin.php:177
+msgid "CSV Remote URL"
+msgstr ""
+
+#. translators: 1: processed count  2: not-found count  3: updated count
+#: includes/Class-Admin.php:243
+msgid "Processed %1$d products, %2$d SKUs not found, %3$d SKUs updated."
+msgstr ""
+
+#: includes/Class-Admin.php:237
+msgid "Start Sync"
+msgstr ""
+
+#: includes/Class-Admin.php:238
+msgid "Syncing\u2026"
+msgstr ""
+
+#: includes/Class-Admin.php:239
+msgid "Sync complete."
+msgstr ""
+
+#: includes/Class-Admin.php:240
+msgid "Failed to download CSV. Check the URL in settings."
+msgstr ""
+
+#: includes/Class-Admin.php:241
+msgid "An error occurred during batch processing. Please retry."
+msgstr ""
+
+#: includes/Class-Admin.php:272
+msgid "You do not have permission to access this page."
+msgstr ""
+
+#: includes/Class-Admin.php:288
+msgid "Settings saved successfully."
+msgstr ""
+
+#: includes/Class-Admin.php:306
+msgid "Save Settings"
+msgstr ""
+
+#: includes/Class-Admin.php:313
+msgid "Stock Synchronisation"
+msgstr ""
+
+#: includes/Class-Admin.php:316
+msgid "Click the button below to download the CSV and update the _stock_CMT meta field for all matching products. The native WooCommerce stock is NOT modified."
+msgstr ""
+
+#: includes/Class-Admin.php:325
+msgid "No CSV URL is configured. Please fill in the \"CSV Remote URL\" field above and save settings before syncing."
+msgstr ""
+
+#: includes/Class-Admin.php:353
+msgid "Processed:"
+msgstr ""
+
+#: includes/Class-Admin.php:356
+msgid "Not found:"
+msgstr ""
+
+#: includes/Class-Admin.php:359
+msgid "Updated:"
+msgstr ""
+
+#: includes/Class-Admin.php:381
+msgid "Enter the warehouse name and the URL of the remote CSV file containing stock data."
+msgstr ""
+
+#: includes/Class-Admin.php:403
+msgid "e.g. Main Warehouse"
+msgstr ""
+
+#: includes/Class-Admin.php:406
+msgid "A label for this warehouse \u2014 used for display purposes only."
+msgstr ""
+
+#: includes/Class-Admin.php:434
+msgid "Full URL of the remote CSV file. Must be accessible from the server (not just your local machine). Delimiter: semicolon (;)."
+msgstr ""
+
+#: includes/Class-Processor.php:129
+#: includes/Class-Processor.php:248
+msgid "You do not have permission to perform this action."
+msgstr ""
+
+#: includes/Class-Processor.php:138
+msgid "No CSV URL is configured. Please add a URL in the plugin settings and save."
+msgstr ""
+
+#. translators: %s: WP_Error message
+#: includes/Class-Processor.php:168
+msgid "Could not reach the CSV URL: %s"
+msgstr ""
+
+#. translators: %d: HTTP status code
+#: includes/Class-Processor.php:177
+msgid "The CSV server returned HTTP %d. Please check the URL and server configuration."
+msgstr ""
+
+#: includes/Class-Processor.php:191
+msgid "The CSV file is empty. Nothing to process."
+msgstr ""
+
+#: includes/Class-Processor.php:202
+msgid "The URL returned an HTML page instead of CSV data. If you are using Google Drive, replace the share/view link with the direct download URL: drive.google.com/uc?export=download&id=FILE_ID"
+msgstr ""
+
+#: includes/Class-Processor.php:212
+msgid "No valid rows found in the CSV after parsing. Check the file format (delimiter: ;)."
+msgstr ""
+
+#: includes/Class-Processor.php:268
+msgid "CSV data has expired or is missing. Please click \"Start Sync\" again to re-download the file."
+msgstr ""
