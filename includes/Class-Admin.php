@@ -2,15 +2,18 @@
 /**
  * Class Admin
  *
- * Responsible for everything that is visible in the WordPress admin:
+ * Responsible for everything visible in the WordPress admin:
  *  - Registering the submenu page under "WooCommerce".
- *  - Wiring the WordPress Settings API (sections, fields, sanitisation).
  *  - Enqueueing admin-script.js and localising the wmsData JS object.
- *  - Rendering the settings form and the sync UI (progress bar, counters).
+ *  - Rendering the multi-warehouse management UI and sync interface.
  *
- * This class has NO business logic. It only deals with presentation and
- * WordPress admin plumbing. All heavy lifting (CSV download, batch update)
- * lives in Class-Processor.php and Class-Stock-Updater.php.
+ * UI structure (three sections):
+ *  A) Warehouse management — dynamic table: add / edit / remove warehouses,
+ *     save to `woo_multi_stock_warehouses` via AJAX.
+ *  B) Sync — one block per warehouse (per-warehouse Sync button) plus a
+ *     global "Sync All → WC Stock" button (Total_Updater).
+ *  C) Stock overview — paginated AJAX table: SKU | Name | WC Stock | [wh cols]
+ *     with live SKU search filter.
  *
  * @package WooMultiStock
  */
@@ -25,414 +28,305 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * Class Admin
  *
- * Handles the plugin's admin UI: settings page, Settings API registration,
- * asset enqueueing, and the sync trigger interface.
+ * Handles the plugin's admin UI: menu page, asset enqueueing, and HTML rendering.
  */
 class Admin {
-
-	// ── Option keys ──────────────────────────────────────────────────────────
-	// Stored as two separate options (not a single serialised array) because:
-	// 1. Each value has a different sanitisation callback.
-	// 2. Individual get_option() calls are simpler and more readable.
-	// 3. No risk of accidentally wiping both values on a sanitisation failure.
-
-	/** @var string Option key for the warehouse/magazzino display name. */
-	private const OPT_WAREHOUSE = 'woo_multi_stock_warehouse_name';
-
-	/** @var string Option key for the remote CSV URL. */
-	private const OPT_CSV_URL = 'woo_multi_stock_csv_url';
-
-	// ── Settings API identifiers ──────────────────────────────────────────────
-	// These strings must be consistent across register_setting(), settings_fields(),
-	// add_settings_section(), add_settings_field(), and do_settings_sections().
-
-	/** @var string The settings group passed to settings_fields() in the form. */
-	private const SETTINGS_GROUP = 'woo_multi_stock_settings_group';
-
-	/** @var string The page slug used as the menu slug and Settings API page key. */
-	private const PAGE_SLUG = 'woo-multi-stock';
-
-	/** @var string ID of the single settings section on our page. */
-	private const SECTION_ID = 'woo_multi_stock_main_section';
 
 	// ── AJAX / nonce ──────────────────────────────────────────────────────────
 
 	/**
-	 * The nonce action string shared between this class (where the nonce is
-	 * created via wp_create_nonce) and Class-Processor.php (where it is
-	 * verified via check_ajax_referer).
+	 * The nonce action string shared between this class and all AJAX handlers.
 	 *
 	 * @var string
 	 */
 	public const NONCE_ACTION = 'woo_multi_stock_ajax_nonce';
 
+	/** @var string Menu slug for the admin page. */
+	private const PAGE_SLUG = 'woo-multi-stock';
+
 	// ── Public API ────────────────────────────────────────────────────────────
 
 	/**
-	 * Register all WordPress hooks needed by this class.
-	 *
-	 * Called once from the main plugin file's plugins_loaded callback.
-	 * Using an explicit register_hooks() method (rather than hooking inside
-	 * the constructor) keeps the class testable: you can instantiate it
-	 * without triggering any side effects.
+	 * Register all WordPress hooks.
 	 *
 	 * @return void
 	 */
 	public function register_hooks(): void {
-		// Add our submenu page to the WooCommerce menu.
-		add_action( 'admin_menu', array( $this, 'add_menu_page' ) );
-
-		// Register option names, sanitisation callbacks, and settings fields
-		// with the Settings API. Must run on admin_init.
-		add_action( 'admin_init', array( $this, 'register_settings' ) );
-
-		// Enqueue our JavaScript only on the plugin's own admin page.
+		add_action( 'admin_menu',            array( $this, 'add_menu_page' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 	}
 
-	// ── Hook callbacks (public so WordPress can call them) ────────────────────
+	// ── Hook callbacks ────────────────────────────────────────────────────────
 
 	/**
 	 * Add a submenu page under the "WooCommerce" top-level menu.
-	 *
-	 * add_submenu_page() returns the page's "hook suffix", which is the string
-	 * we receive in the $hook_suffix parameter of admin_enqueue_scripts. We
-	 * store it as a private property so enqueue_assets() can gate-keep loading.
-	 *
-	 * Capability: manage_options is the standard WordPress admin capability.
-	 * WooCommerce shop managers have manage_woocommerce but NOT manage_options,
-	 * so the sync tool is intentionally restricted to site administrators only.
 	 *
 	 * @return void
 	 */
 	public function add_menu_page(): void {
 		add_submenu_page(
-			'woocommerce',                               // Parent slug.
-			__( 'Multi Stock Sync', 'woo-multi-stock' ), // Browser tab / page title.
-			__( 'Multi Stock', 'woo-multi-stock' ),      // Menu label (shorter).
-			'manage_options',                            // Required capability.
-			self::PAGE_SLUG,                             // Menu slug (must be unique).
-			array( $this, 'render_page' )                // Callback for page HTML.
-		);
-	}
-
-	/**
-	 * Register plugin settings with the WordPress Settings API.
-	 *
-	 * WHY the Settings API?
-	 * It handles nonce generation, sanitisation callbacks, and the options.php
-	 * form action automatically — far less boilerplate and more secure than a
-	 * hand-rolled form with manual $_POST parsing.
-	 *
-	 * @return void
-	 */
-	public function register_settings(): void {
-
-		// ── Option: Warehouse Name ────────────────────────────────────────────
-		register_setting(
-			self::SETTINGS_GROUP,        // Group (matches settings_fields() call).
-			self::OPT_WAREHOUSE,         // Option name in wp_options.
-			array(
-				'type'              => 'string',
-				'description'       => __( 'Display name for this warehouse / magazzino.', 'woo-multi-stock' ),
-				'sanitize_callback' => 'sanitize_text_field', // Strips tags, extra whitespace.
-				'default'           => '',
-			)
-		);
-
-		// ── Option: CSV Remote URL ────────────────────────────────────────────
-		register_setting(
-			self::SETTINGS_GROUP,
-			self::OPT_CSV_URL,
-			array(
-				'type'              => 'string',
-				'description'       => __( 'Full URL of the remote CSV file (must be publicly accessible or use HTTP Basic Auth).', 'woo-multi-stock' ),
-				'sanitize_callback' => 'esc_url_raw', // Normalises URL, strips disallowed protocols.
-				'default'           => '',
-			)
-		);
-
-		// ── Settings section ──────────────────────────────────────────────────
-		// A single section groups both fields visually on the page.
-		add_settings_section(
-			self::SECTION_ID,
-			__( 'Warehouse Configuration', 'woo-multi-stock' ),
-			array( $this, 'render_section_description' ), // Optional description below section title.
-			self::PAGE_SLUG
-		);
-
-		// ── Field: Warehouse Name ─────────────────────────────────────────────
-		add_settings_field(
-			self::OPT_WAREHOUSE,
-			__( 'Warehouse Name', 'woo-multi-stock' ),
-			array( $this, 'render_field_warehouse' ),
+			'woocommerce',
+			__( 'Multi Stock Sync', 'woo-multi-stock' ),
+			__( 'Multi Stock', 'woo-multi-stock' ),
+			'manage_options',
 			self::PAGE_SLUG,
-			self::SECTION_ID,
-			array( 'label_for' => self::OPT_WAREHOUSE ) // Wraps label in <label for="...">
-		);
-
-		// ── Field: CSV Remote URL ─────────────────────────────────────────────
-		add_settings_field(
-			self::OPT_CSV_URL,
-			__( 'CSV Remote URL', 'woo-multi-stock' ),
-			array( $this, 'render_field_csv_url' ),
-			self::PAGE_SLUG,
-			self::SECTION_ID,
-			array( 'label_for' => self::OPT_CSV_URL )
+			array( $this, 'render_page' )
 		);
 	}
 
 	/**
 	 * Enqueue the plugin's admin script and pass PHP data to JavaScript.
 	 *
-	 * The $hook_suffix parameter allows us to load our assets ONLY on the
-	 * plugin's own page, not on every WP admin screen. This keeps the admin
-	 * lean and avoids accidental JS conflicts on other pages.
-	 *
-	 * wp_localize_script() serialises the $data array as a JavaScript object
-	 * named `wmsData`, available globally in admin-script.js.
-	 *
-	 * @param string $hook_suffix  Current admin page hook suffix from WordPress.
+	 * @param string $hook_suffix  Current admin page hook suffix.
 	 * @return void
 	 */
 	public function enqueue_assets( string $hook_suffix ): void {
-		// The hook suffix for an add_submenu_page() page is built as:
-		// "{parent_slug}_page_{menu_slug}". For our case:
-		// "woocommerce_page_woo-multi-stock"
-		// We check with strpos() for PHP 7.4 compatibility.
 		if ( false === strpos( $hook_suffix, self::PAGE_SLUG ) ) {
 			return;
 		}
 
 		wp_enqueue_script(
-			'woo-multi-stock-admin',                            // Handle.
-			WMS_PLUGIN_URL . 'assets/admin-script.js',         // Source URL.
-			array( 'jquery' ),                                  // Dependency.
-			WMS_VERSION,                                        // Version (cache-busting).
-			true                                                // Load in footer (best practice).
+			'woo-multi-stock-admin',
+			WMS_PLUGIN_URL . 'assets/admin-script.js',
+			array( 'jquery' ),
+			WMS_VERSION,
+			true
 		);
 
-		// Pass PHP-side data to JavaScript.
-		// All strings are translatable so the UI works in any language.
+		$wm         = new Warehouse_Manager();
+		$warehouses = $wm->get_all();
+
 		wp_localize_script(
 			'woo-multi-stock-admin',
-			'wmsData', // Global JS object name used in admin-script.js.
+			'wmsData',
 			array(
-				// WordPress AJAX endpoint.
-				'ajaxUrl'   => admin_url( 'admin-ajax.php' ),
-
-				// Nonce for both AJAX actions. A single nonce covers both
-				// woo_multi_stock_download and woo_multi_stock_process_batch
-				// because they share the same action string.
-				'nonce'     => wp_create_nonce( self::NONCE_ACTION ),
-
-				// Rows processed per AJAX request. Keeping this in sync with
-				// BATCH_SIZE in Class-Processor.php (both default to 50).
-				// Defined here so JS can display accurate progress steps.
-				'batchSize' => 50,
-
-				// Translatable UI strings. Using a nested i18n object keeps
-				// wmsData clean and mirrors the convention used by Gutenberg.
-				'i18n'      => array(
+				'ajaxUrl'    => admin_url( 'admin-ajax.php' ),
+				'nonce'      => wp_create_nonce( self::NONCE_ACTION ),
+				'batchSize'  => 50,
+				'warehouses' => $warehouses,
+				'i18n'       => array(
+					// Per-warehouse sync.
 					'startSync'     => __( 'Start Sync', 'woo-multi-stock' ),
-					'syncing'       => __( 'Syncing…', 'woo-multi-stock' ),
+					'syncing'       => __( 'Syncing\u2026', 'woo-multi-stock' ),
 					'done'          => __( 'Sync complete.', 'woo-multi-stock' ),
 					'errorDownload' => __( 'Failed to download CSV. Check the URL in settings.', 'woo-multi-stock' ),
 					'errorBatch'    => __( 'An error occurred during batch processing. Please retry.', 'woo-multi-stock' ),
 					/* translators: 1: processed count  2: not-found count  3: updated count */
 					'summaryTpl'    => __( 'Processed %1$d products, %2$d SKUs not found, %3$d SKUs updated.', 'woo-multi-stock' ),
+					// Sync All.
+					'syncAll'       => __( 'Sync All \u2192 WC Stock', 'woo-multi-stock' ),
+					'calculating'   => __( 'Calculating\u2026', 'woo-multi-stock' ),
+					'calcDone'      => __( 'WooCommerce stock updated.', 'woo-multi-stock' ),
+					'errorCalc'     => __( 'An error occurred during stock aggregation. Please retry.', 'woo-multi-stock' ),
+					/* translators: 1: updated count */
+					'calcSummary'   => __( '%1$d products updated.', 'woo-multi-stock' ),
+					// Warehouse management.
+					'saveWarehouses'  => __( 'Save configuration', 'woo-multi-stock' ),
+					'addWarehouse'    => __( 'Add warehouse', 'woo-multi-stock' ),
+					'removeWarehouse' => __( 'Remove', 'woo-multi-stock' ),
+					'savedOk'         => __( 'Configuration saved.', 'woo-multi-stock' ),
+					'savedError'      => __( 'Error saving configuration.', 'woo-multi-stock' ),
+					// Stock table.
+					'searchSku'    => __( 'Filter by SKU\u2026', 'woo-multi-stock' ),
+					'search'       => __( 'Search', 'woo-multi-stock' ),
+					'loading'      => __( 'Loading\u2026', 'woo-multi-stock' ),
+					'noResults'    => __( 'No products found.', 'woo-multi-stock' ),
+					/* translators: 1: current page  2: total pages */
+					'pageInfo'     => __( 'Page %1$d of %2$d', 'woo-multi-stock' ),
+					'prevPage'     => __( '\u25c4 Prev', 'woo-multi-stock' ),
+					'nextPage'     => __( 'Next \u25ba', 'woo-multi-stock' ),
 				),
 			)
 		);
 	}
 
-	// ── Rendering methods ─────────────────────────────────────────────────────
+	// ── Page rendering ────────────────────────────────────────────────────────
 
 	/**
 	 * Render the full admin page.
 	 *
-	 * The page is split into two logical sections:
-	 *
-	 * A) Settings form — saved via options.php (Settings API standard flow).
-	 *    Only administrators with manage_options capability reach this point
-	 *    (enforced by add_submenu_page's capability check), but we add an
-	 *    explicit current_user_can() check here as a defence-in-depth measure.
-	 *
-	 * B) Sync UI — the "Start Sync" button, progress bar, and live counters.
-	 *    These are not a form; they're driven entirely by admin-script.js.
-	 *
 	 * @return void
 	 */
 	public function render_page(): void {
-		// Capability check: belt-and-suspenders. WordPress already enforces
-		// the capability declared in add_submenu_page(), but an extra check
-		// here protects against misconfigured role plugins.
 		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die(
-				esc_html__( 'You do not have permission to access this page.', 'woo-multi-stock' ),
-				403
-			);
+			wp_die( esc_html__( 'You do not have permission to access this page.', 'woo-multi-stock' ), 403 );
 		}
+
+		$wm         = new Warehouse_Manager();
+		$warehouses = $wm->get_all();
 		?>
 		<div class="wrap">
 
 			<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
 
-			<?php
-			// Show a settings-updated notice when WordPress redirects back
-			// after saving. WordPress adds ?settings-updated=true to the URL.
-			if ( isset( $_GET['settings-updated'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-				add_settings_error(
-					'woo_multi_stock_messages',
-					'woo_multi_stock_message',
-					__( 'Settings saved successfully.', 'woo-multi-stock' ),
-					'updated'
-				);
-			}
-			settings_errors( 'woo_multi_stock_messages' );
-			?>
+			<?php /* ── Section A: Warehouse management ─────────────────────── */ ?>
+			<h2><?php esc_html_e( 'Warehouse Configuration', 'woo-multi-stock' ); ?></h2>
+			<p class="description">
+				<?php esc_html_e( 'Add, edit, or remove warehouses. Each warehouse has a label (used for the meta key) and a remote CSV URL. Changes are saved immediately via the "Save configuration" button.', 'woo-multi-stock' ); ?>
+			</p>
 
-			<?php /* ── Section A: Settings form ─────────────────────────────── */ ?>
-			<form method="post" action="options.php">
-				<?php
-				// Output hidden fields: _wpnonce, _wp_http_referer, option_page.
-				// This is what makes the Settings API handle saving automatically.
-				settings_fields( self::SETTINGS_GROUP );
+			<table class="wp-list-table widefat fixed striped" id="wms-warehouses-table">
+				<thead>
+					<tr>
+						<th style="width:22%"><?php esc_html_e( 'Name (label)', 'woo-multi-stock' ); ?></th>
+						<th style="width:18%"><?php esc_html_e( 'Meta key', 'woo-multi-stock' ); ?></th>
+						<th><?php esc_html_e( 'CSV Remote URL', 'woo-multi-stock' ); ?></th>
+						<th style="width:10%"><?php esc_html_e( 'Actions', 'woo-multi-stock' ); ?></th>
+					</tr>
+				</thead>
+				<tbody id="wms-warehouses-tbody">
+				<?php foreach ( $warehouses as $wh ) : ?>
+					<tr class="wms-wh-row" data-id="<?php echo esc_attr( $wh['id'] ); ?>">
+						<td>
+							<input
+								type="text"
+								class="regular-text wms-wh-label"
+								value="<?php echo esc_attr( $wh['label'] ); ?>"
+								placeholder="<?php esc_attr_e( 'e.g. CMT', 'woo-multi-stock' ); ?>"
+							>
+						</td>
+						<td>
+							<code class="wms-wh-meta-preview">
+								<?php echo esc_html( Warehouse_Manager::get_meta_key( $wh ) ); ?>
+							</code>
+						</td>
+						<td>
+							<input
+								type="url"
+								class="regular-text wms-wh-url"
+								value="<?php echo esc_attr( $wh['csv_url'] ); ?>"
+								placeholder="https://example.com/stock.csv"
+								style="width:100%"
+							>
+						</td>
+						<td>
+							<button type="button" class="button wms-remove-wh">
+								<?php esc_html_e( 'Remove', 'woo-multi-stock' ); ?>
+							</button>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
 
-				// Output the section title, description, and all registered fields.
-				do_settings_sections( self::PAGE_SLUG );
-
-				// Standard "Save Settings" button with WordPress default styling.
-				submit_button( __( 'Save Settings', 'woo-multi-stock' ) );
-				?>
-			</form>
+			<p style="margin-top:10px;">
+				<button type="button" class="button" id="wms-add-warehouse">
+					+ <?php esc_html_e( 'Add warehouse', 'woo-multi-stock' ); ?>
+				</button>
+				&nbsp;
+				<button type="button" class="button button-primary" id="wms-save-warehouses">
+					<?php esc_html_e( 'Save configuration', 'woo-multi-stock' ); ?>
+				</button>
+				<span id="wms-save-status" style="margin-left:10px;"></span>
+			</p>
 
 			<hr>
 
-			<?php /* ── Section B: Sync trigger UI ──────────────────────────── */ ?>
+			<?php /* ── Section B: Sync ─────────────────────────────────────── */ ?>
 			<h2><?php esc_html_e( 'Stock Synchronisation', 'woo-multi-stock' ); ?></h2>
-
 			<p class="description">
-				<?php esc_html_e( 'Click the button below to download the CSV and update the _stock_CMT meta field for all matching products. The native WooCommerce stock is NOT modified.', 'woo-multi-stock' ); ?>
+				<?php esc_html_e( 'Click a warehouse button to download its CSV and update the corresponding meta field. "Sync All \u2192 WC Stock" reads all existing warehouse metas and writes their sum to the native WooCommerce stock field.', 'woo-multi-stock' ); ?>
 			</p>
 
-			<?php
-			// Warn the user if no CSV URL has been saved yet, so they know
-			// why the sync would fail before they even click the button.
-			$csv_url = get_option( self::OPT_CSV_URL, '' );
-			if ( empty( $csv_url ) ) {
-				echo '<div class="notice notice-warning inline"><p>';
-				esc_html_e( 'No CSV URL is configured. Please fill in the "CSV Remote URL" field above and save settings before syncing.', 'woo-multi-stock' );
-				echo '</p></div>';
-			}
-			?>
+			<div id="wms-sync-blocks">
+			<?php foreach ( $warehouses as $wh ) : ?>
+				<?php $meta_key = Warehouse_Manager::get_meta_key( $wh ); ?>
+				<div class="wms-sync-block" data-id="<?php echo esc_attr( $wh['id'] ); ?>" style="margin-bottom:16px; padding:12px; background:#fff; border:1px solid #c3c4c7;">
+					<strong><?php echo esc_html( $wh['label'] ); ?></strong>
+					<code style="margin:0 8px;"><?php echo esc_html( $meta_key ); ?></code>
+					<button type="button" class="button button-primary wms-sync-btn">
+						<?php
+						/* translators: %s: warehouse label */
+						printf( esc_html__( 'Sync %s', 'woo-multi-stock' ), esc_html( $wh['label'] ) );
+						?>
+					</button>
 
-			<p>
-				<button
-					id="wms-start-sync"
-					class="button button-primary"
-					<?php disabled( empty( $csv_url ) ); ?>
-				>
-					<?php esc_html_e( 'Start Sync', 'woo-multi-stock' ); ?>
+					<div class="wms-progress-wrap" style="display:none; margin-top:10px;">
+						<progress class="wms-progress-bar" value="0" max="100" style="width:100%; max-width:500px; height:18px;"></progress>
+						<span class="wms-progress-text" style="margin-left:8px;">0%</span>
+					</div>
+
+					<div class="wms-counters" style="display:none; margin-top:6px; color:#555; font-size:13px;">
+						<?php esc_html_e( 'Processed:', 'woo-multi-stock' ); ?>
+						<strong class="wms-c-processed">0</strong>&nbsp;|&nbsp;
+						<?php esc_html_e( 'Not found:', 'woo-multi-stock' ); ?>
+						<strong class="wms-c-not-found">0</strong>&nbsp;|&nbsp;
+						<?php esc_html_e( 'Updated:', 'woo-multi-stock' ); ?>
+						<strong class="wms-c-updated">0</strong>
+					</div>
+
+					<div class="wms-sync-status" style="margin-top:8px;"></div>
+				</div>
+			<?php endforeach; ?>
+			</div>
+
+			<?php if ( empty( $warehouses ) ) : ?>
+				<div class="notice notice-warning inline">
+					<p><?php esc_html_e( 'No warehouses configured. Add at least one warehouse in the section above.', 'woo-multi-stock' ); ?></p>
+				</div>
+			<?php endif; ?>
+
+			<p style="margin-top:12px;">
+				<button type="button" class="button button-secondary" id="wms-sync-all" <?php disabled( empty( $warehouses ) ); ?>>
+					<?php esc_html_e( 'Sync All \u2192 WC Stock', 'woo-multi-stock' ); ?>
 				</button>
 			</p>
 
-			<?php /* Progress bar — hidden until sync starts (toggled by JS) */ ?>
-			<div id="wms-progress-wrap" style="display:none; margin-top:12px;">
-				<progress
-					id="wms-progress-bar"
-					value="0"
-					max="100"
-					style="width:100%; max-width:600px; height:20px;"
-				></progress>
-				<span id="wms-progress-text" style="margin-left:8px;">0%</span>
+			<div id="wms-syncall-wrap" style="display:none; margin-top:10px;">
+				<progress id="wms-syncall-bar" value="0" max="100" style="width:100%; max-width:500px; height:18px;"></progress>
+				<span id="wms-syncall-text" style="margin-left:8px;">0%</span>
+				<div id="wms-syncall-status" style="margin-top:8px;"></div>
 			</div>
 
-			<?php /* Live counters — hidden until sync starts (toggled by JS) */ ?>
-			<div id="wms-counters" style="display:none; margin-top:8px; color:#555;">
-				<?php esc_html_e( 'Processed:', 'woo-multi-stock' ); ?>
-				<strong id="wms-count-processed">0</strong>
-				&nbsp;|&nbsp;
-				<?php esc_html_e( 'Not found:', 'woo-multi-stock' ); ?>
-				<strong id="wms-count-not-found">0</strong>
-				&nbsp;|&nbsp;
-				<?php esc_html_e( 'Updated:', 'woo-multi-stock' ); ?>
-				<strong id="wms-count-updated">0</strong>
-			</div>
+			<hr>
 
-			<?php /* Status / summary message area — populated by JS */ ?>
-			<div id="wms-status-message" style="margin-top:12px;"></div>
+			<?php /* ── Section C: Stock overview table ────────────────────── */ ?>
+			<h2><?php esc_html_e( 'Stock Overview', 'woo-multi-stock' ); ?></h2>
+
+			<p>
+				<input
+					type="text"
+					id="wms-search-sku"
+					class="regular-text"
+					placeholder="<?php esc_attr_e( 'Filter by SKU\u2026', 'woo-multi-stock' ); ?>"
+					style="max-width:260px;"
+				>
+				<button type="button" class="button" id="wms-search-btn">
+					<?php esc_html_e( 'Search', 'woo-multi-stock' ); ?>
+				</button>
+			</p>
+
+			<table class="wp-list-table widefat fixed striped" id="wms-stock-table" style="margin-top:10px;">
+				<thead>
+					<tr id="wms-stock-thead">
+						<th style="width:14%"><?php esc_html_e( 'SKU', 'woo-multi-stock' ); ?></th>
+						<th><?php esc_html_e( 'Product / Variation', 'woo-multi-stock' ); ?></th>
+						<th style="width:10%"><?php esc_html_e( 'WC Stock', 'woo-multi-stock' ); ?></th>
+						<?php foreach ( $warehouses as $wh ) : ?>
+							<th style="width:10%"><?php echo esc_html( $wh['label'] ); ?></th>
+						<?php endforeach; ?>
+					</tr>
+				</thead>
+				<tbody id="wms-stock-tbody">
+					<tr>
+						<td colspan="<?php echo 3 + count( $warehouses ); ?>" style="text-align:center;">
+							<?php esc_html_e( 'Loading\u2026', 'woo-multi-stock' ); ?>
+						</td>
+					</tr>
+				</tbody>
+			</table>
+
+			<div id="wms-pagination" style="margin-top:10px; display:flex; align-items:center; gap:10px;">
+				<button type="button" class="button" id="wms-prev-page" disabled>
+					<?php esc_html_e( '\u25c4 Prev', 'woo-multi-stock' ); ?>
+				</button>
+				<span id="wms-page-info"></span>
+				<button type="button" class="button" id="wms-next-page" disabled>
+					<?php esc_html_e( 'Next \u25ba', 'woo-multi-stock' ); ?>
+				</button>
+			</div>
 
 		</div><!-- .wrap -->
-		<?php
-	}
-
-	/**
-	 * Render a short description below the section title.
-	 *
-	 * The $args array is passed by add_settings_section() and contains
-	 * 'id', 'title', and 'callback'. We don't need them here, but the
-	 * parameter is required by the callback signature.
-	 *
-	 * @param array $args  Section arguments from add_settings_section().
-	 * @return void
-	 */
-	public function render_section_description( array $args ): void {
-		echo '<p>' . esc_html__( 'Enter the warehouse name and the URL of the remote CSV file containing stock data.', 'woo-multi-stock' ) . '</p>';
-	}
-
-	/**
-	 * Render the "Warehouse Name" input field.
-	 *
-	 * The $args['label_for'] value is already used by the Settings API to
-	 * wrap the field label in <label for="...">. We use the same value as
-	 * the input's id attribute so clicking the label focuses the field.
-	 *
-	 * @param array $args  Field arguments from add_settings_field().
-	 * @return void
-	 */
-	public function render_field_warehouse( array $args ): void {
-		$value = get_option( self::OPT_WAREHOUSE, '' );
-		?>
-		<input
-			type="text"
-			id="<?php echo esc_attr( self::OPT_WAREHOUSE ); ?>"
-			name="<?php echo esc_attr( self::OPT_WAREHOUSE ); ?>"
-			value="<?php echo esc_attr( $value ); ?>"
-			class="regular-text"
-			placeholder="<?php esc_attr_e( 'e.g. Main Warehouse', 'woo-multi-stock' ); ?>"
-		>
-		<p class="description">
-			<?php esc_html_e( 'A label for this warehouse — used for display purposes only.', 'woo-multi-stock' ); ?>
-		</p>
-		<?php
-	}
-
-	/**
-	 * Render the "CSV Remote URL" input field.
-	 *
-	 * Using type="url" triggers native browser URL validation (basic format
-	 * check before the form is even submitted). Server-side sanitisation via
-	 * esc_url_raw() is still applied on save — browser validation is not a
-	 * security measure, just a UX convenience.
-	 *
-	 * @param array $args  Field arguments from add_settings_field().
-	 * @return void
-	 */
-	public function render_field_csv_url( array $args ): void {
-		$value = get_option( self::OPT_CSV_URL, '' );
-		?>
-		<input
-			type="url"
-			id="<?php echo esc_attr( self::OPT_CSV_URL ); ?>"
-			name="<?php echo esc_attr( self::OPT_CSV_URL ); ?>"
-			value="<?php echo esc_attr( $value ); ?>"
-			class="regular-text"
-			placeholder="https://example.com/stock.csv"
-		>
-		<p class="description">
-			<?php esc_html_e( 'Full URL of the remote CSV file. Must be accessible from the server (not just your local machine). Delimiter: semicolon (;).', 'woo-multi-stock' ); ?>
-		</p>
 		<?php
 	}
 }

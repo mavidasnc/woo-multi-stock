@@ -11,6 +11,28 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.1.0] — 2026-03-20
+
+### Added
+- **Multi-warehouse support**: the plugin now manages N warehouses, each identified by a stable `id` slug (derived once from the label via `sanitize_title()`), a mutable `label`, and a `csv_url`. Configuration is stored in the new `woo_multi_stock_warehouses` option.
+- **`Warehouse_Manager` class** (`includes/Class-Warehouse-Manager.php`): single source of truth for warehouse CRUD, meta-key derivation (`_stock_{LABEL}`), transient-key derivation (`wms_csv_{id}`), and AJAX save handler (`wms_save_warehouses`).
+- **Per-warehouse meta fields**: each warehouse writes to its own `_stock_{LABEL}` meta key. The existing `_stock_CMT` data is fully preserved — backward-compatible at both the PHP API and the database level.
+- **`Total_Updater` class** (`includes/Class-Total-Updater.php`): two-phase AJAX batch (`wms_total_prepare` + `wms_total_batch`) that sums all `_stock_[A-Za-z0-9]+` meta values per product/variation and writes the total to WooCommerce native `_stock` (using `wc_update_product_stock()` when `manage_stock = yes`).
+- **`Stock_Table` class** (`includes/Class-Stock-Table.php`): server-side paginated AJAX table (`wms_stock_table_fetch`, 50 rows/page) with SKU search. Uses `WP_Query` with `fields=ids` + a single batched SQL meta query (2 DB queries per page) — designed for catalogues with 5000+ variations.
+- **Admin UI — 3-section redesign**:
+  - **Section A** — Warehouse management table: add / edit / remove warehouses, live meta-key preview, save via AJAX.
+  - **Section B** — Per-warehouse Sync buttons (each with progress bar + counters) and a global "Sync All → WC Stock" button.
+  - **Section C** — Stock overview table: SKU | Product/Variation | WC Stock | one column per warehouse; paginated, filterable by SKU.
+- **Lazy migration** from v1.0.x single-warehouse options: on first load after upgrade, `Warehouse_Manager::maybe_migrate()` auto-creates the `woo_multi_stock_warehouses` option from `woo_multi_stock_warehouse_name` + `woo_multi_stock_csv_url`. Legacy options are **not** deleted.
+- Italian translation updated with all new strings (61 total); `.pot`, `.po`, `.mo` regenerated.
+
+### Changed
+- `Stock_Updater`: added optional `$meta_key` constructor parameter (default = `'_stock_CMT'`). All existing `new Stock_Updater()` call sites remain 100% compatible.
+- `Processor`: both AJAX handlers now resolve the warehouse from a `warehouse_id` POST parameter via `Warehouse_Manager`; the transient key and meta key are dynamic per-warehouse. Removed the hardcoded `TRANSIENT_KEY` constant.
+- `wmsData` JS object extended with `warehouses` array and new `i18n` keys (`syncAll`, `calculating`, `calcDone`, `saveWarehouses`, `addWarehouse`, `searchSku`, `loading`, `noResults`, `pageInfo`, …).
+
+---
+
 ## [1.0.1] — 2026-02-27
 
 ### Fixed
@@ -46,6 +68,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/your-org/woo-multi-stock/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/your-org/woo-multi-stock/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/your-org/woo-multi-stock/releases/tag/v1.0.0

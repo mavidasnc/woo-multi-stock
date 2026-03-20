@@ -168,3 +168,140 @@ msgstr "Nessuna riga valida trovata nel CSV dopo il parsing. Verifica il formato
 #: includes/Class-Processor.php:268
 msgid "CSV data has expired or is missing. Please click \"Start Sync\" again to re-download the file."
 msgstr "I dati CSV sono scaduti o mancanti. Clicca di nuovo \"Avvia Sincronizzazione\" per scaricare nuovamente il file."
+
+#: includes/Class-Processor.php
+msgid "No warehouse specified."
+msgstr "Nessun magazzino specificato."
+
+#: includes/Class-Processor.php
+msgid "Unknown warehouse ID."
+msgstr "ID magazzino sconosciuto."
+
+#: includes/Class-Admin.php
+msgid "Warehouse Configuration"
+msgstr "Configurazione Magazzini"
+
+#: includes/Class-Admin.php
+msgid "Add, edit, or remove warehouses. Each warehouse has a label (used for the meta key) and a remote CSV URL. Changes are saved immediately via the \"Save configuration\" button."
+msgstr "Aggiungi, modifica o rimuovi magazzini. Ogni magazzino ha un'etichetta (usata per il meta key) e un URL CSV remoto. Le modifiche vengono salvate tramite il pulsante \"Salva configurazione\"."
+
+#: includes/Class-Admin.php
+msgid "Name (label)"
+msgstr "Nome (etichetta)"
+
+#: includes/Class-Admin.php
+msgid "Meta key"
+msgstr "Meta key"
+
+#: includes/Class-Admin.php
+msgid "CSV Remote URL"
+msgstr "URL CSV Remoto"
+
+#: includes/Class-Admin.php
+msgid "Actions"
+msgstr "Azioni"
+
+#: includes/Class-Admin.php
+msgid "e.g. CMT"
+msgstr "es. CMT"
+
+#: includes/Class-Admin.php
+msgid "Remove"
+msgstr "Rimuovi"
+
+#: includes/Class-Admin.php
+msgid "Add warehouse"
+msgstr "Aggiungi magazzino"
+
+#: includes/Class-Admin.php
+msgid "Save configuration"
+msgstr "Salva configurazione"
+
+#: includes/Class-Admin.php
+msgid "Stock Synchronisation"
+msgstr "Sincronizzazione Stock"
+
+#: includes/Class-Admin.php
+msgid "Click a warehouse button to download its CSV and update the corresponding meta field. \"Sync All → WC Stock\" reads all existing warehouse metas and writes their sum to the native WooCommerce stock field."
+msgstr "Clicca il pulsante del magazzino per scaricare il CSV e aggiornare il campo meta corrispondente. \"Sync All → WC Stock\" legge tutti i meta dei magazzini e scrive la somma nel campo stock nativo di WooCommerce."
+
+#. translators: %s: warehouse label
+#: includes/Class-Admin.php
+msgid "Sync %s"
+msgstr "Sync %s"
+
+#: includes/Class-Admin.php
+msgid "Processed:"
+msgstr "Elaborati:"
+
+#: includes/Class-Admin.php
+msgid "Not found:"
+msgstr "Non trovati:"
+
+#: includes/Class-Admin.php
+msgid "Updated:"
+msgstr "Aggiornati:"
+
+#: includes/Class-Admin.php
+msgid "No warehouses configured. Add at least one warehouse in the section above."
+msgstr "Nessun magazzino configurato. Aggiungi almeno un magazzino nella sezione precedente."
+
+#: includes/Class-Admin.php
+msgid "Sync All → WC Stock"
+msgstr "Sync All → Stock WC"
+
+#: includes/Class-Admin.php
+msgid "Stock Overview"
+msgstr "Panoramica Stock"
+
+#: includes/Class-Admin.php
+msgid "Filter by SKU…"
+msgstr "Filtra per SKU…"
+
+#: includes/Class-Admin.php
+msgid "Search"
+msgstr "Cerca"
+
+#: includes/Class-Admin.php
+msgid "Loading…"
+msgstr "Caricamento…"
+
+#: includes/Class-Admin.php
+msgid "SKU"
+msgstr "SKU"
+
+#: includes/Class-Admin.php
+msgid "Product / Variation"
+msgstr "Prodotto / Variazione"
+
+#: includes/Class-Admin.php
+msgid "WC Stock"
+msgstr "Stock WC"
+
+#: includes/Class-Admin.php
+msgid "◄ Prev"
+msgstr "◄ Prec"
+
+#: includes/Class-Admin.php
+msgid "Next ►"
+msgstr "Succ ►"
+
+#: includes/Class-Warehouse-Manager.php
+msgid "You do not have permission to perform this action."
+msgstr "Non hai i permessi per eseguire questa azione."
+
+#: includes/Class-Warehouse-Manager.php
+msgid "Invalid warehouse data received."
+msgstr "Dati magazzino non validi ricevuti."
+
+#: includes/Class-Total-Updater.php
+msgid "You do not have permission to perform this action."
+msgstr "Non hai i permessi per eseguire questa azione."
+
+#: includes/Class-Total-Updater.php
+msgid "Aggregation data has expired. Please click \"Sync All\" again."
+msgstr "I dati di aggregazione sono scaduti. Clicca di nuovo \"Sync All\"."
+
+#: includes/Class-Stock-Table.php
+msgid "You do not have permission to perform this action."
+msgstr "Non hai i permessi per eseguire questa azione."

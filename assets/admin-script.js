@@ -1,46 +1,28 @@
 /**
- * Woo Multi Stock — Admin Script
+ * Woo Multi Stock — Admin Script v1.1.0
  *
- * Drives the stock synchronisation UI on the plugin's settings page.
+ * Drives the multi-warehouse stock synchronisation UI on the plugin's admin page.
  *
  * RESPONSIBILITIES
  * ────────────────
- * 1. Bind the "Start Sync" button click event.
- * 2. Call the woo_multi_stock_download AJAX action once to fetch and cache the
- *    CSV on the server, receiving back the total row count.
- * 3. Call woo_multi_stock_process_batch repeatedly (tail-recursive async loop),
- *    advancing the offset by BATCH_SIZE on each successful response.
- * 4. Update the progress bar and live counters after every batch.
- * 5. Display a summary notice when all batches are complete.
- * 6. Surface error messages in the status area on any failure.
+ * A) Warehouse management — add / remove rows in the warehouses table,
+ *    update the live meta-key preview, save via wms_save_warehouses AJAX.
+ * B) Per-warehouse sync — each sync block has its own Download + Batch loop,
+ *    progress bar and live counters.
+ * C) Sync All — wms_total_prepare + wms_total_batch loop writes the sum of
+ *    all _stock_* metas to WC _stock (does NOT re-download any CSV).
+ * D) Stock overview table — paginated (50/page) AJAX table with SKU search,
+ *    built from the wms_stock_table_fetch response.
  *
- * DATA CONTRACT (wmsData — injected by wp_localize_script in Class-Admin.php)
- * ────────────────────────────────────────────────────────────────────────────
+ * DATA CONTRACT (wmsData — injected by wp_localize_script)
+ * ─────────────────────────────────────────────────────────
  * wmsData = {
- *   ajaxUrl  : string,   // admin-ajax.php URL
- *   nonce    : string,   // wp_create_nonce( 'woo_multi_stock_ajax_nonce' )
- *   batchSize: number,   // rows per request (mirrors PHP BATCH_SIZE = 50)
- *   i18n     : {
- *     startSync    : string,  // "Start Sync"
- *     syncing      : string,  // "Syncing…"
- *     done         : string,  // "Sync complete."
- *     errorDownload: string,  // "Failed to download CSV…"
- *     errorBatch   : string,  // "An error occurred during batch…"
- *     summaryTpl   : string,  // "Processed %1$d products, %2$d SKUs not found, %3$d SKUs updated."
- *   }
+ *   ajaxUrl   : string,
+ *   nonce     : string,
+ *   batchSize : number,
+ *   warehouses: [ { id, label, csv_url }, … ],
+ *   i18n      : { … }
  * }
- *
- * AJAX FLOW OVERVIEW
- * ──────────────────
- *
- *   [click] → startSync()
- *               └─ downloadCSV()  ──POST──▶ woo_multi_stock_download
- *                                  ◀── { total: N }
- *               └─ processBatch() ──POST──▶ woo_multi_stock_process_batch (offset=0)
- *                                  ◀── { processed, not_found, updated, next_offset, is_done:false }
- *               └─ processBatch() ──POST──▶ … (offset=50, 100, …)
- *                                  ◀── { …, is_done:true }
- *               └─ finishSync()
  *
  * @package WooMultiStock
  */
@@ -50,428 +32,575 @@
 ( function ( $ ) {
 	'use strict';
 
-	// ── DOM element references ─────────────────────────────────────────────
-	// Cached once on DOMContentLoaded — avoids repeated jQuery lookups inside
-	// the AJAX loop, which runs potentially hundreds of times for large CSVs.
-	var $btnStart;
-	var $progressWrap;
-	var $progressBar;
-	var $progressText;
-	var $countersWrap;
-	var $countProcessed;
-	var $countNotFound;
-	var $countUpdated;
-	var $statusMessage;
+	// ── Bootstrap ───────────────────────────────────────────────────────────
+	$( function () {
+		initWarehouseManager();
+		initSyncBlocks();
+		initSyncAll();
+		initStockTable();
+	} );
 
-	// ── Module-level state ─────────────────────────────────────────────────
-	// These variables hold the sync session state across all async AJAX calls.
-	// They are reset at the start of each new sync via resetState().
+	// ═══════════════════════════════════════════════════════════════════════
+	// SECTION A — Warehouse manager
+	// ═══════════════════════════════════════════════════════════════════════
 
-	/** Total rows in the CSV, returned by the download action. */
-	var totalRows = 0;
+	function initWarehouseManager() {
+		var $tbody   = $( '#wms-warehouses-tbody' );
+		var $addBtn  = $( '#wms-add-warehouse' );
+		var $saveBtn = $( '#wms-save-warehouses' );
+		var $status  = $( '#wms-save-status' );
 
-	/** Cumulative number of rows passed to Stock_Updater (processed + skipped). */
-	var processed = 0;
+		// Live meta-key preview when the user types in a label input.
+		$tbody.on( 'input', '.wms-wh-label', function () {
+			var label   = $( this ).val();
+			var metaKey = '_stock_' + label.replace( /[^A-Za-z0-9]/g, '' );
+			$( this ).closest( 'tr' ).find( '.wms-wh-meta-preview' ).text( metaKey );
+		} );
 
-	/** Cumulative SKUs that had no matching WooCommerce product. */
-	var notFound = 0;
+		// Remove a warehouse row.
+		$tbody.on( 'click', '.wms-remove-wh', function () {
+			$( this ).closest( 'tr' ).remove();
+		} );
 
-	/** Cumulative SKUs successfully written to _stock_CMT. */
-	var updated = 0;
+		// Add a new empty warehouse row.
+		$addBtn.on( 'click', function () {
+			var row = '<tr class="wms-wh-row" data-id="">' +
+				'<td><input type="text" class="regular-text wms-wh-label" value="" placeholder="' + escAttr( wmsData.i18n.addWarehouse ) + '"></td>' +
+				'<td><code class="wms-wh-meta-preview">_stock_</code></td>' +
+				'<td><input type="url" class="regular-text wms-wh-url" value="" placeholder="https://example.com/stock.csv" style="width:100%"></td>' +
+				'<td><button type="button" class="button wms-remove-wh">' + escHtml( wmsData.i18n.removeWarehouse ) + '</button></td>' +
+				'</tr>';
+			$tbody.append( row );
+		} );
 
-	/** Current row offset sent to process_batch. Advances by batchSize each call. */
-	var currentOffset = 0;
+		// Save warehouses via AJAX.
+		$saveBtn.on( 'click', function () {
+			var warehouses = [];
 
-	/**
-	 * Guard flag — true while a sync session is in progress.
-	 * Prevents double-clicks from starting a second parallel sync.
-	 * Also serves as a future cancellation hook: setting isSyncing = false
-	 * inside processBatch() will cause the tail-recursive loop to stop.
-	 */
-	var isSyncing = false;
+			$tbody.find( '.wms-wh-row' ).each( function () {
+				var $row  = $( this );
+				var id    = $row.data( 'id' ) || '';
+				var label = $row.find( '.wms-wh-label' ).val().trim();
+				var url   = $row.find( '.wms-wh-url' ).val().trim();
 
-	// ── Entry point ────────────────────────────────────────────────────────
+				if ( label ) {
+					warehouses.push( { id: id, label: label, csv_url: url } );
+				}
+			} );
 
-	/**
-	 * Initialise the module once the DOM is ready.
-	 * Called immediately by the jQuery ready wrapper at the bottom of this file.
-	 */
-	function init() {
-		// Cache DOM references once.
-		$btnStart       = $( '#wms-start-sync' );
-		$progressWrap   = $( '#wms-progress-wrap' );
-		$progressBar    = $( '#wms-progress-bar' );
-		$progressText   = $( '#wms-progress-text' );
-		$countersWrap   = $( '#wms-counters' );
-		$countProcessed = $( '#wms-count-processed' );
-		$countNotFound  = $( '#wms-count-not-found' );
-		$countUpdated   = $( '#wms-count-updated' );
-		$statusMessage  = $( '#wms-status-message' );
+			$saveBtn.prop( 'disabled', true );
+			$status.text( '' );
 
-		initSyncButton();
+			$.ajax( {
+				url   : wmsData.ajaxUrl,
+				method: 'POST',
+				data  : {
+					action    : 'wms_save_warehouses',
+					nonce     : wmsData.nonce,
+					warehouses: JSON.stringify( warehouses ),
+				},
+			} )
+			.done( function ( response ) {
+				if ( response.success ) {
+					$status.css( 'color', 'green' ).text( wmsData.i18n.savedOk );
+					// Update data-id on rows that got a server-assigned id.
+					var saved = response.data.warehouses || [];
+					$tbody.find( '.wms-wh-row' ).each( function ( i ) {
+						if ( saved[ i ] ) {
+							$( this ).data( 'id', saved[ i ].id ).attr( 'data-id', saved[ i ].id );
+						}
+					} );
+				} else {
+					$status.css( 'color', 'red' ).text( wmsData.i18n.savedError + ' ' + extractMessage( response ) );
+				}
+			} )
+			.fail( function () {
+				$status.css( 'color', 'red' ).text( wmsData.i18n.savedError );
+			} )
+			.always( function () {
+				$saveBtn.prop( 'disabled', false );
+			} );
+		} );
 	}
 
-	// ── Button binding ─────────────────────────────────────────────────────
+	// ═══════════════════════════════════════════════════════════════════════
+	// SECTION B — Per-warehouse sync
+	// ═══════════════════════════════════════════════════════════════════════
+
+	function initSyncBlocks() {
+		$( '.wms-sync-block' ).each( function () {
+			initOneSyncBlock( $( this ) );
+		} );
+	}
 
 	/**
-	 * Bind the click handler on the "Start Sync" button.
+	 * Wire up one warehouse sync block.
 	 *
-	 * The isSyncing guard prevents a second click from launching a parallel
-	 * sync session (which would corrupt the cumulative counters and confuse
-	 * the server-side transient state).
+	 * Each block maintains its own state so multiple warehouses can be synced
+	 * independently (though not simultaneously — the guard prevents that).
+	 *
+	 * @param {jQuery} $block  The .wms-sync-block element.
 	 */
-	function initSyncButton() {
-		$btnStart.on( 'click', function ( e ) {
+	function initOneSyncBlock( $block ) {
+		var warehouseId = $block.data( 'id' );
+
+		var $btn          = $block.find( '.wms-sync-btn' );
+		var $progressWrap = $block.find( '.wms-progress-wrap' );
+		var $progressBar  = $block.find( '.wms-progress-bar' );
+		var $progressText = $block.find( '.wms-progress-text' );
+		var $counters     = $block.find( '.wms-counters' );
+		var $cProcessed   = $block.find( '.wms-c-processed' );
+		var $cNotFound    = $block.find( '.wms-c-not-found' );
+		var $cUpdated     = $block.find( '.wms-c-updated' );
+		var $status       = $block.find( '.wms-sync-status' );
+
+		var state = {
+			isSyncing    : false,
+			totalRows    : 0,
+			processed    : 0,
+			notFound     : 0,
+			updated      : 0,
+			currentOffset: 0,
+		};
+
+		$btn.on( 'click', function ( e ) {
 			e.preventDefault();
-
-			if ( isSyncing ) {
-				// Already running — ignore the click silently.
-				// The button is also visually disabled (see lockUI), but this
-				// guard handles programmatic calls and edge cases.
-				return;
-			}
-
-			startSync();
+			if ( state.isSyncing ) { return; }
+			startWarehouseSync();
 		} );
-	}
 
-	// ── Sync orchestration ─────────────────────────────────────────────────
+		function startWarehouseSync() {
+			state.isSyncing     = true;
+			state.totalRows     = 0;
+			state.processed     = 0;
+			state.notFound      = 0;
+			state.updated       = 0;
+			state.currentOffset = 0;
 
-	/**
-	 * Begin a new sync session.
-	 *
-	 * Resets all state variables and counters to zero, updates the UI to the
-	 * "syncing" state, then fires the first AJAX call (downloadCSV).
-	 */
-	function startSync() {
-		// Reset all session state to zero values.
-		resetState();
+			$btn.prop( 'disabled', true ).text( wmsData.i18n.syncing );
+			$progressWrap.show();
+			$counters.show();
+			$cProcessed.text( '0' );
+			$cNotFound.text( '0' );
+			$cUpdated.text( '0' );
+			setProgress( 0 );
+			$status.html( '' ).removeClass( 'notice notice-success notice-error' );
 
-		// Update UI to "running" state.
-		lockUI();
-		resetCounters();
-		showProgressArea();
-		clearStatusMessage();
-		updateUI(); // Renders 0% immediately so the user sees immediate feedback.
-
-		// Step 1: download and cache the CSV on the server.
-		downloadCSV();
-	}
-
-	/**
-	 * AJAX call 1 of N: download and cache the CSV.
-	 *
-	 * Sends a POST to woo_multi_stock_download. On success, stores the total
-	 * row count and immediately kicks off the first process_batch call.
-	 * On failure, surfaces the error and resets the UI.
-	 */
-	function downloadCSV() {
-		$.ajax( {
-			url    : wmsData.ajaxUrl,
-			method : 'POST',
-			data   : {
-				action: 'woo_multi_stock_download',
-				nonce : wmsData.nonce,
-			},
-		} )
-		.done( function ( response ) {
-			// WordPress AJAX always wraps the payload in { success: bool, data: * }.
-			if ( ! response.success ) {
-				// PHP sent wp_send_json_error() — show the error message from PHP.
-				showError( wmsData.i18n.errorDownload + ' ' + extractMessage( response ) );
-				unlockUI();
-				return;
-			}
-
-			// Store the total row count returned by handle_download().
-			totalRows     = parseInt( response.data.total, 10 ) || 0;
-			currentOffset = 0;
-
-			if ( totalRows === 0 ) {
-				// Parsed fine but empty — nothing to do.
-				showError( wmsData.i18n.errorDownload );
-				unlockUI();
-				return;
-			}
-
-			// Step 2: start the batch-processing loop.
-			processBatch();
-		} )
-		.fail( function ( jqXHR, textStatus ) {
-			// Network-level failure (no response, timeout, CORS, etc.).
-			showError( wmsData.i18n.errorDownload + ' (' + textStatus + ')' );
-			unlockUI();
-		} );
-	}
-
-	/**
-	 * AJAX call 2…N: process one batch of rows.
-	 *
-	 * This function calls itself recursively (via the .done() callback) until
-	 * the server signals is_done === true. Because each call is asynchronous,
-	 * the browser never blocks — this is not true recursion, just sequential
-	 * async chaining.
-	 *
-	 * WHY NOT setTimeout(0)?
-	 * $.ajax is already asynchronous. Scheduling via setTimeout would only add
-	 * latency without giving the browser any additional time to paint, since
-	 * the repaint happens after the current synchronous execution stack anyway.
-	 * Calling processBatch() directly inside .done() is clean and efficient.
-	 *
-	 * CANCELLATION:
-	 * If isSyncing is set to false externally (e.g. a future "Cancel" button),
-	 * the guard at the top of this function stops the loop cleanly without
-	 * orphaning any in-flight request.
-	 */
-	function processBatch() {
-		// Cancellation checkpoint.
-		if ( ! isSyncing ) {
-			return;
+			downloadWarehouseCSV();
 		}
 
-		$.ajax( {
-			url    : wmsData.ajaxUrl,
-			method : 'POST',
-			data   : {
-				action: 'woo_multi_stock_process_batch',
-				nonce : wmsData.nonce,
-				offset: currentOffset,
-			},
-		} )
-		.done( function ( response ) {
-			if ( ! response.success ) {
-				showError( wmsData.i18n.errorBatch + ' ' + extractMessage( response ) );
-				unlockUI();
-				return;
-			}
+		function downloadWarehouseCSV() {
+			$.ajax( {
+				url   : wmsData.ajaxUrl,
+				method: 'POST',
+				data  : {
+					action      : 'woo_multi_stock_download',
+					nonce       : wmsData.nonce,
+					warehouse_id: warehouseId,
+				},
+			} )
+			.done( function ( response ) {
+				if ( ! response.success ) {
+					showBlockError( wmsData.i18n.errorDownload + ' ' + extractMessage( response ) );
+					return;
+				}
 
-			var data = response.data;
+				state.totalRows     = parseInt( response.data.total, 10 ) || 0;
+				state.currentOffset = 0;
 
-			// ── Accumulate counters ────────────────────────────────────────
-			// The server returns per-batch counts; we add them to the running
-			// totals so the UI always shows the cumulative progress.
-			processed     += parseInt( data.processed,  10 ) || 0;
-			notFound      += parseInt( data.not_found,  10 ) || 0;
-			updated       += parseInt( data.updated,    10 ) || 0;
-			currentOffset  = parseInt( data.next_offset, 10 ) || currentOffset;
+				if ( state.totalRows === 0 ) {
+					showBlockError( wmsData.i18n.errorDownload );
+					return;
+				}
 
-			// Refresh the progress bar and counter elements.
-			updateUI();
-
-			if ( data.is_done ) {
-				// All batches complete — show the summary and restore the UI.
-				finishSync();
-			} else {
-				// More batches remain — schedule the next one immediately.
 				processBatch();
-			}
-		} )
-		.fail( function ( jqXHR, textStatus ) {
-			showError( wmsData.i18n.errorBatch + ' (' + textStatus + ')' );
-			unlockUI();
-		} );
-	}
+			} )
+			.fail( function ( _jqXHR, textStatus ) {
+				showBlockError( wmsData.i18n.errorDownload + ' (' + textStatus + ')' );
+			} );
+		}
 
-	// ── State helpers ──────────────────────────────────────────────────────
+		function processBatch() {
+			if ( ! state.isSyncing ) { return; }
 
-	/**
-	 * Reset all session-level state variables to zero.
-	 * Called at the start of each new sync via startSync().
-	 */
-	function resetState() {
-		isSyncing     = true;
-		totalRows     = 0;
-		processed     = 0;
-		notFound      = 0;
-		updated       = 0;
-		currentOffset = 0;
-	}
+			$.ajax( {
+				url   : wmsData.ajaxUrl,
+				method: 'POST',
+				data  : {
+					action      : 'woo_multi_stock_process_batch',
+					nonce       : wmsData.nonce,
+					warehouse_id: warehouseId,
+					offset      : state.currentOffset,
+				},
+			} )
+			.done( function ( response ) {
+				if ( ! response.success ) {
+					showBlockError( wmsData.i18n.errorBatch + ' ' + extractMessage( response ) );
+					return;
+				}
 
-	// ── UI helpers ─────────────────────────────────────────────────────────
+				var d = response.data;
+				state.processed     += parseInt( d.processed,   10 ) || 0;
+				state.notFound      += parseInt( d.not_found,   10 ) || 0;
+				state.updated       += parseInt( d.updated,     10 ) || 0;
+				state.currentOffset  = parseInt( d.next_offset, 10 ) || state.currentOffset;
 
-	/**
-	 * Disable the start button and update its label to signal activity.
-	 * This prevents double-submission and gives visual feedback immediately.
-	 */
-	function lockUI() {
-		$btnStart.prop( 'disabled', true ).text( wmsData.i18n.syncing );
-	}
+				updateBlockUI();
 
-	/**
-	 * Re-enable the start button and restore its original label.
-	 * Called on both success (finishSync) and failure (showError).
-	 */
-	function unlockUI() {
-		isSyncing = false;
-		$btnStart.prop( 'disabled', false ).text( wmsData.i18n.startSync );
-	}
+				if ( d.is_done ) {
+					finishWarehouseSync();
+				} else {
+					processBatch();
+				}
+			} )
+			.fail( function ( _jqXHR, textStatus ) {
+				showBlockError( wmsData.i18n.errorBatch + ' (' + textStatus + ')' );
+			} );
+		}
 
-	/**
-	 * Show the progress bar container and the counters container.
-	 * Both are hidden via inline style="display:none" in the PHP template and
-	 * only shown once a sync session begins.
-	 */
-	function showProgressArea() {
-		$progressWrap.show();
-		$countersWrap.show();
-	}
+		function updateBlockUI() {
+			var pct = state.totalRows > 0
+				? Math.min( 100, Math.round( ( state.currentOffset / state.totalRows ) * 100 ) )
+				: 0;
+			setProgress( pct );
+			$cProcessed.text( state.processed );
+			$cNotFound.text( state.notFound );
+			$cUpdated.text( state.updated );
+		}
 
-	/**
-	 * Set all visible counter elements to zero.
-	 * Keeps the DOM in sync with the resetState() call.
-	 */
-	function resetCounters() {
-		$countProcessed.text( '0' );
-		$countNotFound.text( '0' );
-		$countUpdated.text( '0' );
-	}
+		function setProgress( pct ) {
+			$progressBar.attr( { value: pct, max: 100 } );
+			$progressText.text( pct + '%' );
+		}
 
-	/**
-	 * Remove any previous status/error message from the status area.
-	 */
-	function clearStatusMessage() {
-		$statusMessage.html( '' ).removeClass( 'notice notice-success notice-error' );
-	}
+		function finishWarehouseSync() {
+			state.currentOffset = state.totalRows;
+			updateBlockUI();
 
-	/**
-	 * Update the progress bar value, the percentage text, and the counters
-	 * to reflect the current session state.
-	 *
-	 * PROGRESS CALCULATION:
-	 * Uses currentOffset (rows sent to the server so far) as the numerator,
-	 * not `processed` (rows successfully matched). This gives a true percentage
-	 * of "how far through the file we are" rather than "how many matched", which
-	 * would be confusing if many SKUs are not found.
-	 *
-	 * Edge case: if totalRows is 0 (shouldn't happen normally), we default to 0%
-	 * to avoid a division-by-zero NaN in the progress bar.
-	 */
-	function updateUI() {
-		var percent = totalRows > 0
-			? Math.min( 100, Math.round( ( currentOffset / totalRows ) * 100 ) )
-			: 0;
-
-		// The HTML5 <progress> element uses `value` and `max` attributes.
-		$progressBar.attr( { value: percent, max: 100 } );
-		$progressText.text( percent + '%' );
-
-		// Update live counters.
-		$countProcessed.text( processed );
-		$countNotFound.text( notFound );
-		$countUpdated.text( updated );
-	}
-
-	/**
-	 * Called when all batches have completed successfully.
-	 *
-	 * Forces the progress bar to 100% (in case of rounding), then builds and
-	 * displays the summary notice using the translatable template from wmsData.
-	 */
-	function finishSync() {
-		// Force currentOffset to totalRows so updateUI() always renders 100%.
-		currentOffset = totalRows;
-		updateUI();
-
-		// Build the summary string by substituting the three positional
-		// placeholders in the PHP-side translated template string.
-		// e.g. "Processed %1$d products, %2$d SKUs not found, %3$d SKUs updated."
-		var summary = sprintfSimple( wmsData.i18n.summaryTpl, processed, notFound, updated );
-
-		$statusMessage
-			.addClass( 'notice notice-success' )
-			.html(
-				'<p><strong>' + escHtml( wmsData.i18n.done ) + '</strong> ' +
-				escHtml( summary ) +
-				'</p>'
+			var summary = sprintfSimple(
+				wmsData.i18n.summaryTpl,
+				state.processed,
+				state.notFound,
+				state.updated
 			);
 
-		unlockUI();
+			$status
+				.addClass( 'notice notice-success' )
+				.html( '<p><strong>' + escHtml( wmsData.i18n.done ) + '</strong> ' + escHtml( summary ) + '</p>' );
+
+			state.isSyncing = false;
+			$btn.prop( 'disabled', false ).text( wmsData.i18n.startSync );
+		}
+
+		function showBlockError( message ) {
+			$status
+				.removeClass( 'notice-success' )
+				.addClass( 'notice notice-error' )
+				.html( '<p>' + escHtml( message ) + '</p>' );
+
+			state.isSyncing = false;
+			$btn.prop( 'disabled', false ).text( wmsData.i18n.startSync );
+		}
 	}
 
+	// ═══════════════════════════════════════════════════════════════════════
+	// SECTION C — Sync All (Total_Updater)
+	// ═══════════════════════════════════════════════════════════════════════
+
+	function initSyncAll() {
+		var $btn    = $( '#wms-sync-all' );
+		var $wrap   = $( '#wms-syncall-wrap' );
+		var $bar    = $( '#wms-syncall-bar' );
+		var $text   = $( '#wms-syncall-text' );
+		var $status = $( '#wms-syncall-status' );
+
+		var state = { running: false, total: 0, processed: 0, offset: 0 };
+
+		$btn.on( 'click', function () {
+			if ( state.running ) { return; }
+			state.running   = true;
+			state.total     = 0;
+			state.processed = 0;
+			state.offset    = 0;
+
+			$btn.prop( 'disabled', true ).text( wmsData.i18n.calculating );
+			$wrap.show();
+			$bar.attr( { value: 0, max: 100 } );
+			$text.text( '0%' );
+			$status.html( '' ).removeClass( 'notice notice-success notice-error' );
+
+			prepareTotals();
+		} );
+
+		function prepareTotals() {
+			$.ajax( {
+				url   : wmsData.ajaxUrl,
+				method: 'POST',
+				data  : { action: 'wms_total_prepare', nonce: wmsData.nonce },
+			} )
+			.done( function ( response ) {
+				if ( ! response.success ) {
+					showAllError( wmsData.i18n.errorCalc + ' ' + extractMessage( response ) );
+					return;
+				}
+
+				state.total  = parseInt( response.data.total, 10 ) || 0;
+				state.offset = 0;
+
+				if ( state.total === 0 ) {
+					showAllError( wmsData.i18n.errorCalc );
+					return;
+				}
+
+				processTotalBatch();
+			} )
+			.fail( function ( _jqXHR, textStatus ) {
+				showAllError( wmsData.i18n.errorCalc + ' (' + textStatus + ')' );
+			} );
+		}
+
+		function processTotalBatch() {
+			if ( ! state.running ) { return; }
+
+			$.ajax( {
+				url   : wmsData.ajaxUrl,
+				method: 'POST',
+				data  : { action: 'wms_total_batch', nonce: wmsData.nonce, offset: state.offset },
+			} )
+			.done( function ( response ) {
+				if ( ! response.success ) {
+					showAllError( wmsData.i18n.errorCalc + ' ' + extractMessage( response ) );
+					return;
+				}
+
+				var d = response.data;
+				state.processed += parseInt( d.processed, 10 ) || 0;
+				state.offset     = parseInt( d.next_offset, 10 ) || state.offset;
+
+				var pct = state.total > 0
+					? Math.min( 100, Math.round( ( state.offset / state.total ) * 100 ) )
+					: 0;
+				$bar.attr( { value: pct, max: 100 } );
+				$text.text( pct + '%' );
+
+				if ( d.is_done ) {
+					finishAll();
+				} else {
+					processTotalBatch();
+				}
+			} )
+			.fail( function ( _jqXHR, textStatus ) {
+				showAllError( wmsData.i18n.errorCalc + ' (' + textStatus + ')' );
+			} );
+		}
+
+		function finishAll() {
+			$bar.attr( { value: 100, max: 100 } );
+			$text.text( '100%' );
+
+			var summary = sprintfSimple( wmsData.i18n.calcSummary, state.processed );
+
+			$status
+				.addClass( 'notice notice-success' )
+				.html( '<p><strong>' + escHtml( wmsData.i18n.calcDone ) + '</strong> ' + escHtml( summary ) + '</p>' );
+
+			state.running = false;
+			$btn.prop( 'disabled', false ).text( wmsData.i18n.syncAll );
+		}
+
+		function showAllError( message ) {
+			$status
+				.removeClass( 'notice-success' )
+				.addClass( 'notice notice-error' )
+				.html( '<p>' + escHtml( message ) + '</p>' );
+
+			state.running = false;
+			$btn.prop( 'disabled', false ).text( wmsData.i18n.syncAll );
+		}
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// SECTION D — Stock overview table
+	// ═══════════════════════════════════════════════════════════════════════
+
+	function initStockTable() {
+		var $tbody    = $( '#wms-stock-tbody' );
+		var $thead    = $( '#wms-stock-thead' );
+		var $searchIn = $( '#wms-search-sku' );
+		var $searchBtn = $( '#wms-search-btn' );
+		var $prevBtn  = $( '#wms-prev-page' );
+		var $nextBtn  = $( '#wms-next-page' );
+		var $pageInfo = $( '#wms-page-info' );
+
+		var currentPage = 1;
+		var totalPages  = 1;
+		var searchSku   = '';
+		var loading     = false;
+
+		// Load page 1 immediately.
+		fetchPage( 1, '' );
+
+		$searchBtn.on( 'click', function () {
+			searchSku   = $searchIn.val().trim();
+			currentPage = 1;
+			fetchPage( currentPage, searchSku );
+		} );
+
+		$searchIn.on( 'keypress', function ( e ) {
+			if ( 13 === e.which ) {
+				$searchBtn.trigger( 'click' );
+			}
+		} );
+
+		$prevBtn.on( 'click', function () {
+			if ( currentPage > 1 && ! loading ) {
+				fetchPage( currentPage - 1, searchSku );
+			}
+		} );
+
+		$nextBtn.on( 'click', function () {
+			if ( currentPage < totalPages && ! loading ) {
+				fetchPage( currentPage + 1, searchSku );
+			}
+		} );
+
+		function fetchPage( page, sku ) {
+			if ( loading ) { return; }
+			loading = true;
+
+			var colCount = 3 + ( wmsData.warehouses ? wmsData.warehouses.length : 0 );
+			$tbody.html( '<tr><td colspan="' + colCount + '" style="text-align:center">' + escHtml( wmsData.i18n.loading ) + '</td></tr>' );
+			$prevBtn.prop( 'disabled', true );
+			$nextBtn.prop( 'disabled', true );
+
+			$.ajax( {
+				url   : wmsData.ajaxUrl,
+				method: 'POST',
+				data  : {
+					action    : 'wms_stock_table_fetch',
+					nonce     : wmsData.nonce,
+					page      : page,
+					search_sku: sku,
+				},
+			} )
+			.done( function ( response ) {
+				loading = false;
+
+				if ( ! response.success ) {
+					$tbody.html( '<tr><td colspan="' + colCount + '">' + escHtml( extractMessage( response ) ) + '</td></tr>' );
+					return;
+				}
+
+				var d           = response.data;
+				currentPage     = d.current_page;
+				totalPages      = d.total_pages || 1;
+				var rows        = d.rows || [];
+				var labels      = d.warehouse_labels || [];
+
+				// Rebuild thead columns to match the labels returned by the server.
+				rebuildThead( labels );
+
+				if ( rows.length === 0 ) {
+					$tbody.html( '<tr><td colspan="' + ( 3 + labels.length ) + '" style="text-align:center">' + escHtml( wmsData.i18n.noResults ) + '</td></tr>' );
+				} else {
+					var html = '';
+					for ( var i = 0; i < rows.length; i++ ) {
+						var row = rows[ i ];
+						html += '<tr>';
+						html += '<td><code>' + escHtml( row.sku ) + '</code></td>';
+						html += '<td>' + escHtml( row.name ) + '</td>';
+						html += '<td style="text-align:right">' + parseInt( row.wc_stock, 10 ) + '</td>';
+						for ( var j = 0; j < labels.length; j++ ) {
+							var qty = row.warehouses && row.warehouses[ labels[ j ] ] !== undefined
+								? parseInt( row.warehouses[ labels[ j ] ], 10 )
+								: 0;
+							html += '<td style="text-align:right">' + qty + '</td>';
+						}
+						html += '</tr>';
+					}
+					$tbody.html( html );
+				}
+
+				// Update pagination.
+				var infoTpl = wmsData.i18n.pageInfo || 'Page %1$d of %2$d';
+				$pageInfo.text( sprintfSimple( infoTpl, currentPage, totalPages ) );
+				$prevBtn.prop( 'disabled', currentPage <= 1 );
+				$nextBtn.prop( 'disabled', currentPage >= totalPages );
+			} )
+			.fail( function () {
+				loading = false;
+				$tbody.html( '<tr><td colspan="' + colCount + '" style="text-align:center;color:red">' + escHtml( wmsData.i18n.noResults ) + '</td></tr>' );
+				$prevBtn.prop( 'disabled', true );
+				$nextBtn.prop( 'disabled', true );
+			} );
+		}
+
+		function rebuildThead( labels ) {
+			// Preserve static columns and rebuild warehouse columns dynamically.
+			var html = '<tr id="wms-stock-thead">';
+			html += '<th style="width:14%">SKU</th>';
+			html += '<th>' + escHtml( 'Product / Variation' ) + '</th>';
+			html += '<th style="width:10%">WC Stock</th>';
+			for ( var i = 0; i < labels.length; i++ ) {
+				html += '<th style="width:10%">' + escHtml( labels[ i ] ) + '</th>';
+			}
+			html += '</tr>';
+			$thead.html( html );
+		}
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// UTILITIES (shared across all sections)
+	// ═══════════════════════════════════════════════════════════════════════
+
 	/**
-	 * Display an error notice in the status area and restore the UI.
+	 * Positional sprintf: replaces %1$d, %2$d, %3$d with integer values.
 	 *
-	 * @param {string} message  Human-readable error description to display.
+	 * @param {string} tpl   Template string.
+	 * @param {...number}    Positional values (1-indexed).
+	 * @return {string}
 	 */
-	function showError( message ) {
-		$statusMessage
-			.removeClass( 'notice-success' )
-			.addClass( 'notice notice-error' )
-			.html( '<p>' + escHtml( message ) + '</p>' );
-
-		unlockUI();
-	}
-
-	// ── Utility functions ──────────────────────────────────────────────────
-
-	/**
-	 * Minimal positional sprintf replacement.
-	 *
-	 * Replaces %1$d, %2$d, %3$d with the three supplied integer values.
-	 * This is sufficient for the single summary template used in this plugin.
-	 * A full printf implementation is not needed and would be over-engineering.
-	 *
-	 * @param  {string} template   Template string with %1$d, %2$d, %3$d.
-	 * @param  {number} val1       Value for %1$d.
-	 * @param  {number} val2       Value for %2$d.
-	 * @param  {number} val3       Value for %3$d.
-	 * @return {string}            Template with placeholders replaced.
-	 */
-	function sprintfSimple( template, val1, val2, val3 ) {
-		return template
-			.replace( '%1$d', val1 )
-			.replace( '%2$d', val2 )
-			.replace( '%3$d', val3 );
+	function sprintfSimple( tpl ) {
+		var result = tpl;
+		for ( var i = 1; i < arguments.length; i++ ) {
+			result = result.replace( new RegExp( '%' + i + '\\$d', 'g' ), arguments[ i ] );
+		}
+		return result;
 	}
 
 	/**
-	 * Minimal HTML escaping for safe insertion via .html().
+	 * HTML-escape a string using the DOM.
 	 *
-	 * We output user-facing strings (translated text + server error messages)
-	 * via jQuery's .html() method to allow the <strong> and <p> wrapper tags
-	 * in finishSync()/showError(). Any dynamic values (the summary string,
-	 * server error text) are passed through this function first to neutralise
-	 * any HTML that may have been injected by the server response.
-	 *
-	 * Using jQuery's own $('<div>').text(str).html() pattern is the idiomatic
-	 * jQuery approach — it lets the browser do the escaping via the DOM API,
-	 * so no regex-based character substitution is needed.
-	 *
-	 * @param  {string} str  Raw string that may contain HTML special characters.
-	 * @return {string}      HTML-escaped string safe for insertion into .html().
+	 * @param {string} str
+	 * @return {string}
 	 */
 	function escHtml( str ) {
-		return $( '<div>' ).text( str ).html();
+		return $( '<div>' ).text( String( str ) ).html();
 	}
 
 	/**
-	 * Extract a human-readable message from a failed WordPress AJAX response.
+	 * Attribute-escape a string.
 	 *
-	 * wp_send_json_error() places the message in response.data (string) or
-	 * response.data.message (object). This helper handles both shapes so
-	 * error reporting stays accurate regardless of which PHP path was taken.
-	 *
-	 * @param  {Object} response  The parsed jQuery AJAX response object.
-	 * @return {string}           Error message string, or empty string if none.
+	 * @param {string} str
+	 * @return {string}
 	 */
-	function extractMessage( response ) {
-		if ( ! response || ! response.data ) {
-			return '';
-		}
-		if ( typeof response.data === 'string' ) {
-			return response.data;
-		}
-		if ( typeof response.data.message === 'string' ) {
-			return response.data.message;
-		}
-		return '';
+	function escAttr( str ) {
+		return escHtml( str )
+			.replace( /"/g, '&quot;' )
+			.replace( /'/g, '&#039;' );
 	}
 
-	// ── Bootstrap ──────────────────────────────────────────────────────────
-
-	// Run init() once jQuery signals the DOM is ready.
-	// The IIFE pattern (function($){...}(jQuery)) ensures $ refers to jQuery
-	// even if other libraries (Prototype, MooTools) are also present.
-	$( init );
+	/**
+	 * Extract a message from a wp_send_json_error() response.
+	 *
+	 * @param {Object} response
+	 * @return {string}
+	 */
+	function extractMessage( response ) {
+		if ( ! response || ! response.data ) { return ''; }
+		if ( typeof response.data === 'string' ) { return response.data; }
+		if ( typeof response.data.message === 'string' ) { return response.data.message; }
+		return '';
+	}
 
 }( jQuery ) );

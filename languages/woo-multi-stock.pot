@@ -168,3 +168,140 @@ msgstr ""
 #: includes/Class-Processor.php:268
 msgid "CSV data has expired or is missing. Please click \"Start Sync\" again to re-download the file."
 msgstr ""
+
+#: includes/Class-Processor.php
+msgid "No warehouse specified."
+msgstr ""
+
+#: includes/Class-Processor.php
+msgid "Unknown warehouse ID."
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Warehouse Configuration"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Add, edit, or remove warehouses. Each warehouse has a label (used for the meta key) and a remote CSV URL. Changes are saved immediately via the \"Save configuration\" button."
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Name (label)"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Meta key"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "CSV Remote URL"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Actions"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "e.g. CMT"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Remove"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Add warehouse"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Save configuration"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Stock Synchronisation"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Click a warehouse button to download its CSV and update the corresponding meta field. \"Sync All → WC Stock\" reads all existing warehouse metas and writes their sum to the native WooCommerce stock field."
+msgstr ""
+
+#. translators: %s: warehouse label
+#: includes/Class-Admin.php
+msgid "Sync %s"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Processed:"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Not found:"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Updated:"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "No warehouses configured. Add at least one warehouse in the section above."
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Sync All → WC Stock"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Stock Overview"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Filter by SKU…"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Search"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Loading…"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "SKU"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Product / Variation"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "WC Stock"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "◄ Prev"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Next ►"
+msgstr ""
+
+#: includes/Class-Warehouse-Manager.php
+msgid "You do not have permission to perform this action."
+msgstr ""
+
+#: includes/Class-Warehouse-Manager.php
+msgid "Invalid warehouse data received."
+msgstr ""
+
+#: includes/Class-Total-Updater.php
+msgid "You do not have permission to perform this action."
+msgstr ""
+
+#: includes/Class-Total-Updater.php
+msgid "Aggregation data has expired. Please click \"Sync All\" again."
+msgstr ""
+
+#: includes/Class-Stock-Table.php
+msgid "You do not have permission to perform this action."
+msgstr ""

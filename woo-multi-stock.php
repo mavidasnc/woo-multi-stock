@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       Woo Multi Stock
  * Plugin URI:        https://github.com/your-org/woo-multi-stock
- * Description:       Synchronises warehouse stock quantities from a remote CSV file to the custom _stock_CMT meta field on WooCommerce products and variations. Does NOT touch native WooCommerce stock.
- * Version:           1.0.1
+ * Description:       Synchronises warehouse stock quantities from remote CSV files to per-warehouse meta fields on WooCommerce products and variations. Supports multiple warehouses; aggregates totals into native WooCommerce stock.
+ * Version:           1.1.0
  * Author:            Mavida s.n.c.
  * Author URI:        https://mavida.com
  * License:           GPL-2.0-or-later
@@ -77,7 +77,7 @@ if ( version_compare( PHP_VERSION, '7.4', '<' ) ) {
 // Using the WMS_ prefix (Woo Multi Stock) to avoid collisions with other plugins.
 
 /** Plugin version — used for asset cache-busting. */
-define( 'WMS_VERSION', '1.0.1' );
+define( 'WMS_VERSION', '1.1.0' );
 
 /** Absolute path to the plugin directory, with trailing slash. */
 define( 'WMS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
@@ -203,17 +203,32 @@ add_action(
 			dirname( plugin_basename( WMS_PLUGIN_FILE ) ) . '/languages/'
 		);
 
-		// Admin-only bootstrap: instantiate the two main classes and wire their
-		// hooks. is_admin() returns true for both regular admin page requests
-		// and wp-admin AJAX requests, which is exactly what we need.
+		// Migrate legacy single-warehouse options to the new multi-warehouse
+		// format. Safe to call on every request — it is a no-op after the
+		// first migration (checks for option existence before writing).
+		$warehouse_manager = new \WooMultiStock\Warehouse_Manager();
+		$warehouse_manager->maybe_migrate();
+
+		// Admin-only bootstrap: instantiate all classes and wire their hooks.
+		// is_admin() returns true for both regular admin page requests and
+		// wp-admin AJAX requests, which is exactly what we need.
 		if ( is_admin() ) {
 			// Class-Admin.php — settings page, UI rendering, asset enqueueing.
 			( new \WooMultiStock\Admin() )->register_hooks();
 
-			// Class-Processor.php — AJAX handlers for CSV download and batch
-			// processing. Must be registered on every admin request so that
-			// wp_ajax_ actions are available when the browser calls them.
+			// Class-Processor.php — AJAX handlers for per-warehouse CSV download
+			// and batch stock update. Must be registered on every admin request.
 			( new \WooMultiStock\Processor() )->register_hooks();
+
+			// Class-Warehouse-Manager.php — AJAX handler for saving warehouses.
+			$warehouse_manager->register_hooks();
+
+			// Class-Total-Updater.php — AJAX handlers for the Sync All operation
+			// (sums all _stock_* metas → writes to WC _stock).
+			( new \WooMultiStock\Total_Updater() )->register_hooks();
+
+			// Class-Stock-Table.php — AJAX handler for the paginated stock table.
+			( new \WooMultiStock\Stock_Table() )->register_hooks();
 		}
 	},
 	11 // Priority 11: run after WooCommerce (priority 10).
