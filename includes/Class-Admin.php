@@ -107,15 +107,15 @@ class Admin {
 				'i18n'       => array(
 					// Per-warehouse sync.
 					'startSync'     => __( 'Start Sync', 'woo-multi-stock' ),
-					'syncing'       => __( 'Syncing\xe2\x80\xa6', 'woo-multi-stock' ),
+					'syncing'       => __( 'Syncing…', 'woo-multi-stock' ),
 					'done'          => __( 'Sync complete.', 'woo-multi-stock' ),
 					'errorDownload' => __( 'Failed to download CSV. Check the URL in settings.', 'woo-multi-stock' ),
 					'errorBatch'    => __( 'An error occurred during batch processing. Please retry.', 'woo-multi-stock' ),
 					/* translators: 1: processed count  2: not-found count  3: updated count */
 					'summaryTpl'    => __( 'Processed %1$d products, %2$d SKUs not found, %3$d SKUs updated.', 'woo-multi-stock' ),
 					// Sync All.
-					'syncAll'       => __( 'Sync All \xe2\x86\x92 WC Stock', 'woo-multi-stock' ),
-					'calculating'   => __( 'Calculating\xe2\x80\xa6', 'woo-multi-stock' ),
+					'syncAll'       => __( 'Sync All → WC Stock', 'woo-multi-stock' ),
+					'calculating'   => __( 'Calculating…', 'woo-multi-stock' ),
 					'calcDone'      => __( 'WooCommerce stock updated.', 'woo-multi-stock' ),
 					'errorCalc'     => __( 'An error occurred during stock aggregation. Please retry.', 'woo-multi-stock' ),
 					/* translators: 1: updated count */
@@ -127,14 +127,15 @@ class Admin {
 					'savedOk'         => __( 'Configuration saved.', 'woo-multi-stock' ),
 					'savedError'      => __( 'Error saving configuration.', 'woo-multi-stock' ),
 					// Stock table.
-					'searchSku'    => __( 'Filter by SKU\xe2\x80\xa6', 'woo-multi-stock' ),
+					'searchSku'    => __( 'Filter by SKU…', 'woo-multi-stock' ),
 					'search'       => __( 'Search', 'woo-multi-stock' ),
-					'loading'      => __( 'Loading\xe2\x80\xa6', 'woo-multi-stock' ),
+					'loading'      => __( 'Loading…', 'woo-multi-stock' ),
 					'noResults'    => __( 'No products found.', 'woo-multi-stock' ),
 					/* translators: 1: current page  2: total pages */
 					'pageInfo'     => __( 'Page %1$d of %2$d', 'woo-multi-stock' ),
-					'prevPage'     => __( '\xe2\x97\x84 Prev', 'woo-multi-stock' ),
-					'nextPage'     => __( 'Next \xe2\x96\xba', 'woo-multi-stock' ),
+					'prevPage'      => __( '◄ Prev', 'woo-multi-stock' ),
+					'nextPage'      => __( 'Next ►', 'woo-multi-stock' ),
+					'allWarehouses' => __( 'All warehouses', 'woo-multi-stock' ),
 				),
 			)
 		);
@@ -225,7 +226,7 @@ class Admin {
 			<?php /* ── Section B: Sync ─────────────────────────────────────── */ ?>
 			<h2><?php esc_html_e( 'Stock Synchronisation', 'woo-multi-stock' ); ?></h2>
 			<p class="description">
-				<?php esc_html_e( 'Click a warehouse button to download its CSV and update the corresponding meta field. "Sync All \xe2\x86\x92 WC Stock" reads all existing warehouse metas and writes their sum to the native WooCommerce stock field.', 'woo-multi-stock' ); ?>
+				<?php esc_html_e( 'Click a warehouse button to download its CSV and update the corresponding meta field. "Sync All → WC Stock" reads all existing warehouse metas and writes their sum to the native WooCommerce stock field.', 'woo-multi-stock' ); ?>
 			</p>
 
 			<div id="wms-sync-blocks">
@@ -268,7 +269,7 @@ class Admin {
 
 			<p style="margin-top:12px;">
 				<button type="button" class="button button-secondary" id="wms-sync-all" <?php disabled( empty( $warehouses ) ); ?>>
-					<?php esc_html_e( 'Sync All \xe2\x86\x92 WC Stock', 'woo-multi-stock' ); ?>
+					<?php esc_html_e( 'Sync All → WC Stock', 'woo-multi-stock' ); ?>
 				</button>
 			</p>
 
@@ -283,13 +284,21 @@ class Admin {
 			<?php /* ── Section C: Stock overview table ────────────────────── */ ?>
 			<h2><?php esc_html_e( 'Stock Overview', 'woo-multi-stock' ); ?></h2>
 
-			<p>
+			<p style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+				<select id="wms-warehouse-filter">
+					<option value=""><?php esc_html_e( 'All warehouses', 'woo-multi-stock' ); ?></option>
+					<?php foreach ( $warehouses as $wh ) : ?>
+						<option value="<?php echo esc_attr( $wh['id'] ); ?>">
+							<?php echo esc_html( $wh['label'] ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
 				<input
 					type="text"
 					id="wms-search-sku"
 					class="regular-text"
-					placeholder="<?php esc_attr_e( 'Filter by SKU\xe2\x80\xa6', 'woo-multi-stock' ); ?>"
-					style="max-width:260px;"
+					placeholder="<?php esc_attr_e( 'Filter by SKU…', 'woo-multi-stock' ); ?>"
+					style="max-width:220px;"
 				>
 				<button type="button" class="button" id="wms-search-btn">
 					<?php esc_html_e( 'Search', 'woo-multi-stock' ); ?>
@@ -310,7 +319,7 @@ class Admin {
 				<tbody id="wms-stock-tbody">
 					<tr>
 						<td colspan="<?php echo 3 + count( $warehouses ); ?>" style="text-align:center;">
-							<?php esc_html_e( 'Loading\xe2\x80\xa6', 'woo-multi-stock' ); ?>
+							<?php esc_html_e( 'Loading…', 'woo-multi-stock' ); ?>
 						</td>
 					</tr>
 				</tbody>
@@ -318,11 +327,11 @@ class Admin {
 
 			<div id="wms-pagination" style="margin-top:10px; display:flex; align-items:center; gap:10px;">
 				<button type="button" class="button" id="wms-prev-page" disabled>
-					<?php esc_html_e( '\xe2\x97\x84 Prev', 'woo-multi-stock' ); ?>
+					<?php esc_html_e( '◄ Prev', 'woo-multi-stock' ); ?>
 				</button>
 				<span id="wms-page-info"></span>
 				<button type="button" class="button" id="wms-next-page" disabled>
-					<?php esc_html_e( 'Next \xe2\x96\xba', 'woo-multi-stock' ); ?>
+					<?php esc_html_e( 'Next ►', 'woo-multi-stock' ); ?>
 				</button>
 			</div>
 

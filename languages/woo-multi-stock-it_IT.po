@@ -305,3 +305,7 @@ msgstr "I dati di aggregazione sono scaduti. Clicca di nuovo \"Sync All\"."
 #: includes/Class-Stock-Table.php
 msgid "You do not have permission to perform this action."
 msgstr "Non hai i permessi per eseguire questa azione."
+
+#: includes/Class-Admin.php
+msgid "All warehouses"
+msgstr "Tutti i magazzini"

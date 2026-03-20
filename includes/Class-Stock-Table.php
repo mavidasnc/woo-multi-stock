@@ -76,9 +76,12 @@ class Stock_Table {
 			);
 		}
 
-		$page       = max( 1, absint( isset( $_POST['page'] ) ? $_POST['page'] : 1 ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$search_sku = isset( $_POST['search_sku'] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$page             = max( 1, absint( isset( $_POST['page'] ) ? $_POST['page'] : 1 ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$search_sku       = isset( $_POST['search_sku'] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			? sanitize_text_field( wp_unslash( (string) $_POST['search_sku'] ) )
+			: '';
+		$warehouse_filter = isset( $_POST['warehouse_filter'] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			? sanitize_title( wp_unslash( (string) $_POST['warehouse_filter'] ) )
 			: '';
 
 		// Get warehouse labels for the response header.
@@ -90,7 +93,7 @@ class Stock_Table {
 		}
 
 		// Query product/variation IDs for this page.
-		$query_result = $this->query_products( $page, $search_sku );
+		$query_result = $this->query_products( $page, $search_sku, $warehouse_filter );
 		$post_ids     = $query_result['ids'];
 		$total_rows   = $query_result['total'];
 		$total_pages  = $query_result['pages'];
@@ -120,11 +123,15 @@ class Stock_Table {
 	 * SKU search is done via a postmeta LIKE query which is acceptable for
 	 * ~5200 rows — the postmeta table is indexed on (post_id, meta_key).
 	 *
-	 * @param int    $page        1-based page number.
-	 * @param string $search_sku  Optional SKU substring to filter by.
+	 * When warehouse_filter is provided, only products/variations with
+	 * qty > 0 in that warehouse's meta field are returned.
+	 *
+	 * @param int    $page             1-based page number.
+	 * @param string $search_sku       Optional SKU substring to filter by.
+	 * @param string $warehouse_filter Optional warehouse id to filter by (qty > 0).
 	 * @return array { ids: int[], total: int, pages: int }
 	 */
-	private function query_products( int $page, string $search_sku ): array {
+	private function query_products( int $page, string $search_sku, string $warehouse_filter = '' ): array {
 		$args = array(
 			'post_type'      => array( 'product', 'product_variation' ),
 			'post_status'    => array( 'publish', 'private' ),
@@ -136,13 +143,33 @@ class Stock_Table {
 			'no_found_rows'  => false,
 		);
 
+		$meta_conditions = array();
+
 		if ( '' !== $search_sku ) {
-			$args['meta_query'] = array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
-				array(
-					'key'     => '_sku',
-					'value'   => $search_sku,
-					'compare' => 'LIKE',
-				),
+			$meta_conditions[] = array(
+				'key'     => '_sku',
+				'value'   => $search_sku,
+				'compare' => 'LIKE',
+			);
+		}
+
+		if ( '' !== $warehouse_filter ) {
+			$wm        = new Warehouse_Manager();
+			$warehouse = $wm->get_by_id( $warehouse_filter );
+			if ( false !== $warehouse ) {
+				$meta_conditions[] = array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+					'key'     => Warehouse_Manager::get_meta_key( $warehouse ),
+					'value'   => 0,
+					'compare' => '>',
+					'type'    => 'NUMERIC',
+				);
+			}
+		}
+
+		if ( ! empty( $meta_conditions ) ) {
+			$args['meta_query'] = array_merge( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+				array( 'relation' => 'AND' ),
+				$meta_conditions
 			);
 		}
 

@@ -305,3 +305,7 @@ msgstr ""
 #: includes/Class-Stock-Table.php
 msgid "You do not have permission to perform this action."
 msgstr ""
+
+#: includes/Class-Admin.php
+msgid "All warehouses"
+msgstr ""

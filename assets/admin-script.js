@@ -424,13 +424,14 @@
 	// ═══════════════════════════════════════════════════════════════════════
 
 	function initStockTable() {
-		var $tbody    = $( '#wms-stock-tbody' );
-		var $thead    = $( '#wms-stock-thead' );
-		var $searchIn = $( '#wms-search-sku' );
+		var $tbody     = $( '#wms-stock-tbody' );
+		var $thead     = $( '#wms-stock-thead' );
+		var $searchIn  = $( '#wms-search-sku' );
 		var $searchBtn = $( '#wms-search-btn' );
-		var $prevBtn  = $( '#wms-prev-page' );
-		var $nextBtn  = $( '#wms-next-page' );
-		var $pageInfo = $( '#wms-page-info' );
+		var $whFilter  = $( '#wms-warehouse-filter' );
+		var $prevBtn   = $( '#wms-prev-page' );
+		var $nextBtn   = $( '#wms-next-page' );
+		var $pageInfo  = $( '#wms-page-info' );
 
 		var currentPage = 1;
 		var totalPages  = 1;
@@ -450,6 +451,13 @@
 			if ( 13 === e.which ) {
 				$searchBtn.trigger( 'click' );
 			}
+		} );
+
+		// Warehouse filter dropdown: reset to page 1 on change.
+		$whFilter.on( 'change', function () {
+			currentPage = 1;
+			searchSku   = $searchIn.val().trim();
+			fetchPage( currentPage, searchSku );
 		} );
 
 		$prevBtn.on( 'click', function () {
@@ -477,10 +485,11 @@
 				url   : wmsData.ajaxUrl,
 				method: 'POST',
 				data  : {
-					action    : 'wms_stock_table_fetch',
-					nonce     : wmsData.nonce,
-					page      : page,
-					search_sku: sku,
+					action           : 'wms_stock_table_fetch',
+					nonce            : wmsData.nonce,
+					page             : page,
+					search_sku       : sku,
+					warehouse_filter : $whFilter.val(),
 				},
 			} )
 			.done( function ( response ) {
