@@ -536,10 +536,10 @@
 		}
 
 		function rebuildThead( labels ) {
-			// Preserve static columns and rebuild warehouse columns dynamically.
-			var html = '<tr id="wms-stock-thead">';
+			// $thead is the <thead> element; set its innerHTML to a valid <tr>.
+			var html = '<tr>';
 			html += '<th style="width:14%">SKU</th>';
-			html += '<th>' + escHtml( 'Product / Variation' ) + '</th>';
+			html += '<th>Product / Variation</th>';
 			html += '<th style="width:10%">WC Stock</th>';
 			for ( var i = 0; i < labels.length; i++ ) {
 				html += '<th style="width:10%">' + escHtml( labels[ i ] ) + '</th>';
