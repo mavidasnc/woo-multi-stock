@@ -20,8 +20,12 @@
  * in turn provides the CSV URL, the dynamic transient key (wms_csv_{id}), and
  * the meta key (_stock_{LABEL}).
  *
- * The private helper get_warehouse_or_die() centralises this resolution and
- * calls wp_send_json_error() + exit if the ID is missing or unknown.
+ * PUBLIC API FOR CLI/CRON
+ * ───────────────────────
+ * fetch_rows( $warehouse ) downloads and parses the CSV without touching any
+ * transient. CLI commands call this directly and iterate over all rows in one
+ * PHP execution, bypassing the AJAX batch loop. AJAX handlers still use the
+ * transient approach so the browser can display incremental progress.
  *
  * STATE BETWEEN REQUESTS
  * ──────────────────────
@@ -100,43 +104,27 @@ class Processor {
 		add_action( 'wp_ajax_woo_multi_stock_process_batch', array( $this, 'handle_process_batch' ) );
 	}
 
-	// ── AJAX handlers (public so WordPress can call them) ─────────────────────
-
 	/**
-	 * AJAX handler: download and cache the remote CSV for a specific warehouse.
+	 * Download and parse the CSV for a warehouse without caching the result.
 	 *
-	 * Flow:
-	 *  1. Verify nonce + capability.
-	 *  2. Resolve the warehouse from the POST `warehouse_id` param.
-	 *  3. Fetch the file with wp_remote_get() (configurable timeout via filter).
-	 *  4. Parse the body into a structured rows array (see parse_csv()).
-	 *  5. Store the rows in a warehouse-specific transient for subsequent
-	 *     process_batch calls.
-	 *  6. Return JSON success with the total row count.
+	 * This method contains the pure HTTP + parsing logic extracted from
+	 * handle_download() so that both the AJAX handler and the WP-CLI command
+	 * can reuse it without duplicating code.
 	 *
-	 * On any failure, wp_send_json_error() is called with a human-readable
-	 * message; the JS layer surfaces it in the status div.
+	 * The AJAX handler calls fetch_rows() and then stores the result in a
+	 * transient so subsequent batch requests can read it. The CLI command calls
+	 * fetch_rows() and iterates over all rows directly in one PHP execution.
 	 *
-	 * @return void  (terminates via wp_send_json_* — never returns normally)
+	 * @param array $warehouse Warehouse map: ['id' => string, 'label' => string, 'csv_url' => string].
+	 * @return array|\WP_Error Parsed rows as [['sku' => string, 'qty' => int], ...],
+	 *                         or a WP_Error on any failure.
 	 */
-	public function handle_download(): void {
-		// ── Security ──────────────────────────────────────────────────────────
-		check_ajax_referer( Admin::NONCE_ACTION, 'nonce' );
-
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error(
-				__( 'You do not have permission to perform this action.', 'woo-multi-stock' ),
-				403
-			);
-		}
-
-		// ── Resolve warehouse ──────────────────────────────────────────────────
-		$warehouse     = $this->get_warehouse_or_die();
-		$csv_url       = esc_url_raw( $warehouse['csv_url'] );
-		$transient_key = Warehouse_Manager::get_transient_key( $warehouse );
+	public function fetch_rows( array $warehouse ) {
+		$csv_url = esc_url_raw( (string) ( isset( $warehouse['csv_url'] ) ? $warehouse['csv_url'] : '' ) );
 
 		if ( empty( $csv_url ) ) {
-			wp_send_json_error(
+			return new \WP_Error(
+				'wms_no_url',
 				__( 'No CSV URL is configured. Please add a URL in the plugin settings and save.', 'woo-multi-stock' )
 			);
 		}
@@ -153,7 +141,8 @@ class Processor {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			wp_send_json_error(
+			return new \WP_Error(
+				'wms_http_error',
 				sprintf(
 					/* translators: %s: WP_Error message */
 					__( 'Could not reach the CSV URL: %s', 'woo-multi-stock' ),
@@ -162,9 +151,10 @@ class Processor {
 			);
 		}
 
-		$http_code = wp_remote_retrieve_response_code( $response );
-		if ( 200 !== (int) $http_code ) {
-			wp_send_json_error(
+		$http_code = (int) wp_remote_retrieve_response_code( $response );
+		if ( 200 !== $http_code ) {
+			return new \WP_Error(
+				'wms_http_status',
 				sprintf(
 					/* translators: %d: HTTP status code */
 					__( 'The CSV server returned HTTP %d. Please check the URL and server configuration.', 'woo-multi-stock' ),
@@ -177,7 +167,8 @@ class Processor {
 		$body = wp_remote_retrieve_body( $response );
 
 		if ( empty( trim( $body ) ) ) {
-			wp_send_json_error(
+			return new \WP_Error(
+				'wms_empty_body',
 				__( 'The CSV file is empty. Nothing to process.', 'woo-multi-stock' )
 			);
 		}
@@ -186,7 +177,8 @@ class Processor {
 		$body_start = ltrim( substr( $body, 0, 100 ) );
 		if ( preg_match( '/^<!(?:DOCTYPE|doctype)\s/i', $body_start )
 			|| preg_match( '/^<html[\s>]/i', $body_start ) ) {
-			wp_send_json_error(
+			return new \WP_Error(
+				'wms_html_response',
 				__( 'The URL returned an HTML page instead of CSV data. If you are using Google Drive, replace the share/view link with the direct download URL: drive.google.com/uc?export=download&id=FILE_ID', 'woo-multi-stock' )
 			);
 		}
@@ -194,9 +186,45 @@ class Processor {
 		$rows = $this->parse_csv( $body );
 
 		if ( empty( $rows ) ) {
-			wp_send_json_error(
+			return new \WP_Error(
+				'wms_no_rows',
 				__( 'No valid rows found in the CSV after parsing. Check the file format (delimiter: ;).', 'woo-multi-stock' )
 			);
+		}
+
+		return $rows;
+	}
+
+	// ── AJAX handlers (public so WordPress can call them) ─────────────────────
+
+	/**
+	 * AJAX handler: download and cache the remote CSV for a specific warehouse.
+	 *
+	 * Delegates HTTP + parsing to fetch_rows() and stores the result in a
+	 * per-warehouse transient for subsequent process_batch calls.
+	 *
+	 * @return void  (terminates via wp_send_json_* — never returns normally)
+	 */
+	public function handle_download(): void {
+		// ── Security ──────────────────────────────────────────────────────────
+		check_ajax_referer( Admin::NONCE_ACTION, 'nonce' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error(
+				__( 'You do not have permission to perform this action.', 'woo-multi-stock' ),
+				403
+			);
+		}
+
+		// ── Resolve warehouse ──────────────────────────────────────────────────
+		$warehouse     = $this->get_warehouse_or_die();
+		$transient_key = Warehouse_Manager::get_transient_key( $warehouse );
+
+		// ── Download + parse via shared method ────────────────────────────────
+		$rows = $this->fetch_rows( $warehouse );
+
+		if ( is_wp_error( $rows ) ) {
+			wp_send_json_error( $rows->get_error_message() );
 		}
 
 		// ── Cache rows in warehouse-specific transient ────────────────────────
@@ -342,10 +370,13 @@ class Processor {
 	 *  - Replace comma with dot → cast to float → cast to int.
 	 *  - "1,0000000000000" → "1.0000000000000" → 1.0 → 1
 	 *
+	 * Visibility is protected (not private) so that fetch_rows() — and any
+	 * subclass that needs to override parsing — can call this method directly.
+	 *
 	 * @param string $body  Raw HTTP response body (full CSV file content).
 	 * @return array        Array of [ 'sku' => string, 'qty' => int ] maps.
 	 */
-	private function parse_csv( string $body ): array {
+	protected function parse_csv( string $body ): array {
 		// Strip UTF-8 BOM.
 		if ( "\xEF\xBB\xBF" === substr( $body, 0, 3 ) ) {
 			$body = substr( $body, 3 );

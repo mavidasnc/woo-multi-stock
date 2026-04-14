@@ -3,7 +3,7 @@
  * Plugin Name:       Woo Multi Stock
  * Plugin URI:        https://github.com/your-org/woo-multi-stock
  * Description:       Synchronises warehouse stock quantities from remote CSV files to per-warehouse meta fields on WooCommerce products and variations. Supports multiple warehouses; aggregates totals into native WooCommerce stock.
- * Version:           1.1.0
+ * Version:           1.2.0
  * Author:            Mavida s.n.c.
  * Author URI:        https://mavida.com
  * License:           GPL-2.0-or-later
@@ -77,7 +77,7 @@ if ( version_compare( PHP_VERSION, '7.4', '<' ) ) {
 // Using the WMS_ prefix (Woo Multi Stock) to avoid collisions with other plugins.
 
 /** Plugin version — used for asset cache-busting. */
-define( 'WMS_VERSION', '1.1.0' );
+define( 'WMS_VERSION', '1.2.0' );
 
 /** Absolute path to the plugin directory, with trailing slash. */
 define( 'WMS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
@@ -208,6 +208,14 @@ add_action(
 		// first migration (checks for option existence before writing).
 		$warehouse_manager = new \WooMultiStock\Warehouse_Manager();
 		$warehouse_manager->maybe_migrate();
+
+		// WP-CLI commands — registered outside is_admin() because WP-CLI returns
+		// false for is_admin() in CLI context. The @when after_wp_load annotation
+		// in the CLI class docblocks guarantees WooCommerce is available when any
+		// command actually executes.
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			\WP_CLI::add_command( 'wms', new \WooMultiStock\CLI() );
+		}
 
 		// Admin-only bootstrap: instantiate all classes and wire their hooks.
 		// is_admin() returns true for both regular admin page requests and

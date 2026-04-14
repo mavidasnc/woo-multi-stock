@@ -11,6 +11,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.2.0] — 2026-04-14
+
+### Added
+- **WP-CLI support** (`includes/Class-CLI.php`): new `CLI` class registers the `wms` command group via `WP_CLI::add_command()`.
+  - `wp wms sync [--warehouse=<id|all>]` — downloads the remote CSV and updates `_stock_*` warehouse meta fields for one or all configured warehouses; shows a per-warehouse progress bar and a final summary.
+  - `wp wms sync-total` — aggregates all `_stock_*` metas into WooCommerce native `_stock` (same logic as the admin "Sync All" button); shows a global progress bar.
+  - Both commands can be scheduled via system cron (see CLAUDE.md → WP-CLI for example crontab entries).
+- **`Processor::fetch_rows(array $warehouse): array|\WP_Error`** — public method that encapsulates the entire HTTP download + CSV parse without writing to any transient. Returns a structured rows array or a `WP_Error` with a specific error code (`wms_no_url`, `wms_http_error`, `wms_http_status`, `wms_empty_body`, `wms_html_response`, `wms_no_rows`). Reused by both `handle_download()` and the CLI `sync` command.
+- **`Total_Updater::collect_ids(): array`** — public method that queries all product/variation IDs with warehouse metas and returns `{ids, variation_ids}` without touching any transient. Called by `handle_prepare()` and the CLI `sync-total` command.
+- **`Total_Updater::process_ids(array $ids, array $variation_set): array`** — public method that processes a list of IDs (sum metas → write WC stock) and returns `{processed, updated}`. Called by `handle_process_batch()` with a batch slice and by the CLI with arbitrary-sized slices.
+
+### Changed
+- `Processor::parse_csv()` visibility changed from `private` to `protected` so `fetch_rows()` can call it without duplication and subclasses can override it if needed.
+- `Processor::handle_download()` refactored into a thin AJAX wrapper: security checks → `fetch_rows()` → `set_transient()` → JSON. No logic duplication with the CLI path.
+- `Total_Updater::handle_prepare()` refactored into a thin AJAX wrapper: security checks → `collect_ids()` → `set_transient()` × 2 → JSON.
+- `Total_Updater::handle_process_batch()` refactored into a thin AJAX wrapper: reads transients → `process_ids($batch, $variation_set)` → JSON.
+- `Total_Updater` "Sync All" now sets `_manage_stock = 'yes'` on product **variations** that do not yet have stock management enabled, so WooCommerce properly recalculates `_stock_status`. Simple products and variable-product parents are left unchanged. The check is skipped when the flag is already `'yes'` to avoid unnecessary DB writes.
+- WP-CLI command registration added to `plugins_loaded` (priority 11) **outside** the `is_admin()` guard, because `is_admin()` returns `false` in WP-CLI context.
+
+---
+
 ## [1.1.0] — 2026-03-20
 
 ### Added
@@ -68,7 +89,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/your-org/woo-multi-stock/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/your-org/woo-multi-stock/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/your-org/woo-multi-stock/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/your-org/woo-multi-stock/releases/tag/v1.0.0

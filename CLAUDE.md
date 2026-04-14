@@ -25,18 +25,19 @@ The main file is the only entry point. In order:
 2. Constants: `WMS_VERSION`, `WMS_PLUGIN_DIR`, `WMS_PLUGIN_URL`, `WMS_PLUGIN_FILE`, `WMS_TEXT_DOMAIN`
 3. Inline PSR-4 autoloader: `WooMultiStock\Foo` → `includes/Class-Foo.php` (underscores become hyphens)
 4. HPOS compatibility declaration (`before_woocommerce_init`)
-5. `plugins_loaded` at priority 11: WC guard → textdomain → `Warehouse_Manager::maybe_migrate()` → register hooks for all 5 classes (admin-only)
+5. `plugins_loaded` at priority 11: WC guard → textdomain → `Warehouse_Manager::maybe_migrate()` → WP-CLI registration (if `WP_CLI` defined) → register hooks for all 5 classes (admin-only via `is_admin()`)
 
 ### Class responsibilities
 
 | Class | File | Responsibility |
 |---|---|---|
 | `WooMultiStock\Admin` | `includes/Class-Admin.php` | Submenu page, asset enqueue + `wp_localize_script`, HTML rendering (3 sections) |
-| `WooMultiStock\Processor` | `includes/Class-Processor.php` | `wp_ajax_woo_multi_stock_download` + `_process_batch`; reads `warehouse_id` from POST |
+| `WooMultiStock\Processor` | `includes/Class-Processor.php` | `wp_ajax_woo_multi_stock_download` + `_process_batch`; public `fetch_rows()` for CLI reuse |
 | `WooMultiStock\Stock_Updater` | `includes/Class-Stock-Updater.php` | SKU lookup + `update_post_meta($meta_key)`; constructor takes optional meta key |
 | `WooMultiStock\Warehouse_Manager` | `includes/Class-Warehouse-Manager.php` | CRUD for `woo_multi_stock_warehouses` option; lazy migration from legacy options; AJAX save |
-| `WooMultiStock\Total_Updater` | `includes/Class-Total-Updater.php` | `wms_total_prepare` + `wms_total_batch`: sums `_stock_*` metas → writes WC `_stock` |
+| `WooMultiStock\Total_Updater` | `includes/Class-Total-Updater.php` | `wms_total_prepare` + `wms_total_batch`: sums `_stock_*` metas → writes WC `_stock`; public `collect_ids()` + `process_ids()` for CLI reuse |
 | `WooMultiStock\Stock_Table` | `includes/Class-Stock-Table.php` | `wms_stock_table_fetch`: server-side paginated table (2 queries/page) |
+| `WooMultiStock\CLI` | `includes/Class-CLI.php` | WP-CLI command group `wms`: `sync [--warehouse=<id\|all>]` and `sync-total` |
 
 ### Data model — warehouses
 
@@ -109,6 +110,42 @@ Data contract: `wmsData` object — contains `ajaxUrl`, `nonce`, `batchSize`, `w
 | `woo_multi_stock_download_timeout` | `apply_filters` | `Processor::handle_download()` — before `wp_remote_get` |
 
 `woo_multi_stock_after_row_update` passes 3 args `($product_id, $sku, $qty)` — consumers must declare `add_action(..., 10, 3)`.
+
+## WP-CLI commands
+
+The plugin registers a `wms` command group available when WP-CLI is active.
+
+```bash
+# Sync a single warehouse (use the warehouse ID slug)
+wp wms sync --warehouse=cmt
+
+# Sync all configured warehouses in sequence
+wp wms sync --warehouse=all
+wp wms sync               # 'all' is the default
+
+# Aggregate all _stock_* metas into WooCommerce native _stock
+wp wms sync-total
+```
+
+### Typical cron setup
+
+```cron
+# /etc/cron.d/woo-multi-stock  (replace /var/www/html with your WP root)
+0  2 * * * www-data /usr/local/bin/wp wms sync --warehouse=all --path=/var/www/html --quiet >> /var/log/wms-sync.log 2>&1
+30 2 * * * www-data /usr/local/bin/wp wms sync-total --path=/var/www/html --quiet >> /var/log/wms-sync.log 2>&1
+```
+
+### Architecture note — CLI vs AJAX
+
+The CLI commands reuse the same public business-logic methods as the AJAX handlers:
+
+| Operation | Public method | Called by |
+|---|---|---|
+| Download + parse CSV | `Processor::fetch_rows(array $warehouse)` | `handle_download()` + `CLI::sync()` |
+| Collect product IDs | `Total_Updater::collect_ids()` | `handle_prepare()` + `CLI::sync_total()` |
+| Write WC stock | `Total_Updater::process_ids(array $ids, array $variation_set)` | `handle_process_batch()` + `CLI::sync_total()` |
+
+AJAX handlers add transient-based state so the JS batch loop can span multiple HTTP requests. CLI commands call the same methods directly in a single PHP execution (no transients needed).
 
 ## Adding a new class
 
