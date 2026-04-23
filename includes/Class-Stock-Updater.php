@@ -2,34 +2,35 @@
 /**
  * Class Stock_Updater
  *
- * Single-responsibility class: given a SKU and a quantity, locate the
- * corresponding WooCommerce product (or variation) and write the quantity
+ * Single-responsibility class: given a SKU and a quantity, locate every
+ * WooCommerce product (or variation) sharing that SKU and write the quantity
  * to a custom warehouse meta field (e.g. `_stock_CMT`, `_stock_WH2`).
+ *
+ * WPML COMPATIBILITY
+ * ──────────────────
+ * In a WPML/WooCommerce Multilingual install, a single SKU is shared across
+ * translations (each language has its OWN post ID with the same `_sku` meta).
+ * The old implementation used `wc_get_product_id_by_sku()`, which is filtered
+ * by WCML to return only the product in the current admin language — so the
+ * English translation never received updates.
+ *
+ * We now query `postmeta` directly (`SELECT post_id … WHERE meta_key='_sku'
+ * AND meta_value=<sku>`) and update every matching post. This:
+ *   1. Keeps all language copies in sync for the warehouse meta field.
+ *   2. Still works when WPML is NOT installed (returns a single ID).
+ *   3. Bypasses any WCML filtering of `wc_get_product_id_by_sku()`.
  *
  * BACKWARD COMPATIBILITY
  * ──────────────────────
- * The public constant META_KEY = '_stock_CMT' is preserved unchanged so
- * any external code that references Stock_Updater::META_KEY continues to
- * work without modification.
- *
- * When instantiated without arguments, `new Stock_Updater()` still writes
- * to `_stock_CMT`, exactly as before. Processor now passes the dynamic
- * meta key derived from Warehouse_Manager::get_meta_key() via the
- * constructor, e.g. `new Stock_Updater( '_stock_WH2' )`.
- *
- * IMPORTANT: NATIVE WOOCOMMERCE STOCK IS NOT MODIFIED
- * ────────────────────────────────────────────────────
- * This class deliberately does NOT call wc_update_product_stock() or modify
- * the _stock, _stock_status, or manage_stock meta fields. It writes ONLY to
- * the per-warehouse meta field. The Total_Updater class is responsible for
- * aggregating warehouse metas and writing the sum to WooCommerce's _stock.
+ * `META_KEY = '_stock_CMT'` and the constructor's default meta key are
+ * preserved. `update()` still returns `int|false` (first matched post ID or
+ * false) so existing callers that check `false === $result` keep working.
  *
  * HOOK PROVIDED
  * ─────────────
- * woo_multi_stock_after_row_update (do_action) — fires after every successful
- * update_post_meta() call. Passes the product ID, SKU, and quantity so
- * external code can react (e.g. log, notify, sync to another system).
- * Consumers must declare add_action( ..., 10, 3 ).
+ * woo_multi_stock_after_row_update (do_action) — fires ONCE PER POST updated,
+ * with three args (product_id, sku, qty). In a WPML install with IT+EN copies
+ * of the same SKU, the hook fires twice per CSV row.
  *
  * @package WooMultiStock
  */
@@ -44,14 +45,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * Class Stock_Updater
  *
- * Looks up a WooCommerce product by SKU and updates a warehouse meta field.
+ * Looks up every product matching a SKU and updates their warehouse meta field.
  */
 class Stock_Updater {
 
 	/**
 	 * Default meta key — preserved for backward compatibility.
-	 *
-	 * External code can still reference Stock_Updater::META_KEY as before.
 	 *
 	 * @var string
 	 */
@@ -59,9 +58,6 @@ class Stock_Updater {
 
 	/**
 	 * The meta key this instance will write to.
-	 *
-	 * Set via the constructor; defaults to self::META_KEY so existing call
-	 * sites that do `new Stock_Updater()` are entirely unaffected.
 	 *
 	 * @var string
 	 */
@@ -77,49 +73,63 @@ class Stock_Updater {
 	}
 
 	/**
-	 * Update the warehouse meta field for the product matching the given SKU.
+	 * Update the warehouse meta field on every product matching the given SKU.
 	 *
-	 * LOOKUP STRATEGY
-	 * ───────────────
-	 * wc_get_product_id_by_sku() queries the postmeta table for the `_sku`
-	 * meta key. It returns the post ID of ANY product type — simple products,
-	 * variable products, and individual variations all store their SKU in the
-	 * same meta key. This means:
+	 * Writes the same quantity to all posts that share the SKU (typically one
+	 * per WPML language copy). The `woo_multi_stock_after_row_update` hook
+	 * fires once per updated post.
 	 *
-	 *  - If a simple product has SKU "ABC", its post ID is returned.
-	 *  - If a variation has SKU "ABC", the variation's own post ID is returned
-	 *    (NOT the parent variable product's ID).
+	 * @param string $sku  The product SKU to look up.
+	 * @param int    $qty  The stock quantity to write.
 	 *
-	 * PHP 7.4 NOTE: The `int|false` union return type is PHP 8.0+ syntax.
-	 * For PHP 7.4 compatibility, the return type hint is omitted from the
-	 * method signature and documented only in the @return docblock tag.
-	 *
-	 * @param string $sku  The product SKU to look up (as read from the CSV).
-	 * @param int    $qty  The stock quantity to write (already converted to int).
-	 *
-	 * @return int|false  Post ID of the updated product/variation on success.
-	 *                    Boolean false if no product with the given SKU exists.
+	 * @return int|false  First matched post ID on success (truthy for callers
+	 *                    that only check success/failure). Boolean false if no
+	 *                    product with the given SKU exists.
 	 */
 	public function update( string $sku, int $qty ) {
 
-		// ── 1. Locate the product by SKU ──────────────────────────────────────
-		$product_id = wc_get_product_id_by_sku( $sku );
+		$product_ids = $this->find_product_ids_by_sku( $sku );
 
-		// ── 2. Guard: SKU not found ────────────────────────────────────────────
-		if ( ! $product_id ) {
+		if ( empty( $product_ids ) ) {
 			return false;
 		}
 
-		// ── 3. Write the warehouse meta field ─────────────────────────────────
-		// Uses $this->meta_key (set via constructor) instead of the hardcoded
-		// META_KEY constant, enabling multi-warehouse support while remaining
-		// 100% backward-compatible when called without constructor arguments.
-		update_post_meta( $product_id, $this->meta_key, $qty );
+		foreach ( $product_ids as $product_id ) {
+			update_post_meta( $product_id, $this->meta_key, $qty );
+			do_action( 'woo_multi_stock_after_row_update', $product_id, $sku, $qty );
+		}
 
-		// ── 4. Hook: after each successful update ─────────────────────────────
-		do_action( 'woo_multi_stock_after_row_update', $product_id, $sku, $qty );
+		// Return the first ID for backward compatibility — callers only need
+		// a truthy value to distinguish "found" from "not found".
+		return $product_ids[0];
+	}
 
-		// ── 5. Return the product ID ──────────────────────────────────────────
-		return $product_id;
+	/**
+	 * Resolve a SKU to every product/variation ID that carries it.
+	 *
+	 * Direct postmeta query — intentionally bypasses wc_get_product_id_by_sku()
+	 * so WPML/WCML filters don't scope the result to the current admin language.
+	 *
+	 * @param string $sku Product SKU.
+	 * @return int[] Zero or more post IDs.
+	 */
+	private function find_product_ids_by_sku( string $sku ): array {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$ids = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT pm.post_id
+				 FROM {$wpdb->postmeta} pm
+				 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+				 WHERE pm.meta_key = '_sku'
+				   AND pm.meta_value = %s
+				   AND p.post_type IN ('product','product_variation')
+				   AND p.post_status NOT IN ('trash','auto-draft')",
+				$sku
+			)
+		);
+
+		return array_map( 'intval', (array) $ids );
 	}
 }

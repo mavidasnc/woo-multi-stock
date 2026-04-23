@@ -118,8 +118,8 @@ class Admin {
 					'calculating'   => __( 'Calculating…', 'woo-multi-stock' ),
 					'calcDone'      => __( 'WooCommerce stock updated.', 'woo-multi-stock' ),
 					'errorCalc'     => __( 'An error occurred during stock aggregation. Please retry.', 'woo-multi-stock' ),
-					/* translators: 1: updated count */
-					'calcSummary'   => __( '%1$d products updated.', 'woo-multi-stock' ),
+					/* translators: 1: processed count  2: updated count  3: skipped count */
+					'calcSummaryFull' => __( 'Processed: %1$d | Updated: %2$d | Skipped: %3$d', 'woo-multi-stock' ),
 					// Warehouse management.
 					'saveWarehouses'  => __( 'Save configuration', 'woo-multi-stock' ),
 					'addWarehouse'    => __( 'Add warehouse', 'woo-multi-stock' ),
@@ -127,6 +127,14 @@ class Admin {
 					'savedOk'         => __( 'Configuration saved.', 'woo-multi-stock' ),
 					'savedError'      => __( 'Error saving configuration.', 'woo-multi-stock' ),
 					// Stock table.
+					'colId'        => __( 'ID', 'woo-multi-stock' ),
+					'colLang'      => __( 'Lang', 'woo-multi-stock' ),
+					'parentSku'    => __( 'Parent SKU', 'woo-multi-stock' ),
+					'actions'      => __( 'Actions', 'woo-multi-stock' ),
+					'rowSyncBtn'   => __( 'Sync', 'woo-multi-stock' ),
+					'rowSyncing'   => __( 'Syncing…', 'woo-multi-stock' ),
+					'rowSynced'    => __( 'Updated', 'woo-multi-stock' ),
+					'rowSkipped'   => __( 'No change', 'woo-multi-stock' ),
 					'searchSku'    => __( 'Filter by SKU…', 'woo-multi-stock' ),
 					'search'       => __( 'Search', 'woo-multi-stock' ),
 					'loading'      => __( 'Loading…', 'woo-multi-stock' ),
@@ -136,6 +144,11 @@ class Admin {
 					'prevPage'      => __( '◄ Prev', 'woo-multi-stock' ),
 					'nextPage'      => __( 'Next ►', 'woo-multi-stock' ),
 					'allWarehouses' => __( 'All warehouses', 'woo-multi-stock' ),
+					// Counter labels.
+					'processed'     => __( 'Processed:', 'woo-multi-stock' ),
+					'notFound'      => __( 'Not found:', 'woo-multi-stock' ),
+					'updated'       => __( 'Updated:', 'woo-multi-stock' ),
+					'skipped'       => __( 'Skipped:', 'woo-multi-stock' ),
 				),
 			)
 		);
@@ -276,6 +289,16 @@ class Admin {
 			<div id="wms-syncall-wrap" style="display:none; margin-top:10px;">
 				<progress id="wms-syncall-bar" value="0" max="100" style="width:100%; max-width:500px; height:18px;"></progress>
 				<span id="wms-syncall-text" style="margin-left:8px;">0%</span>
+
+				<div id="wms-syncall-counters" style="margin-top:6px; color:#555; font-size:13px;">
+					<?php esc_html_e( 'Processed:', 'woo-multi-stock' ); ?>
+					<strong id="wms-syncall-c-processed">0</strong>&nbsp;|&nbsp;
+					<?php esc_html_e( 'Updated:', 'woo-multi-stock' ); ?>
+					<strong id="wms-syncall-c-updated">0</strong>&nbsp;|&nbsp;
+					<?php esc_html_e( 'Skipped:', 'woo-multi-stock' ); ?>
+					<strong id="wms-syncall-c-skipped">0</strong>
+				</div>
+
 				<div id="wms-syncall-status" style="margin-top:8px;"></div>
 			</div>
 
@@ -308,17 +331,21 @@ class Admin {
 			<table class="wp-list-table widefat fixed striped" id="wms-stock-table" style="margin-top:10px;">
 				<thead id="wms-stock-thead">
 					<tr>
-						<th style="width:14%"><?php esc_html_e( 'SKU', 'woo-multi-stock' ); ?></th>
+						<th style="width:6%"><?php esc_html_e( 'ID', 'woo-multi-stock' ); ?></th>
+						<th style="width:5%"><?php esc_html_e( 'Lang', 'woo-multi-stock' ); ?></th>
+						<th style="width:10%"><?php esc_html_e( 'Parent SKU', 'woo-multi-stock' ); ?></th>
+						<th style="width:12%"><?php esc_html_e( 'SKU', 'woo-multi-stock' ); ?></th>
 						<th><?php esc_html_e( 'Product / Variation', 'woo-multi-stock' ); ?></th>
-						<th style="width:10%"><?php esc_html_e( 'WC Stock', 'woo-multi-stock' ); ?></th>
+						<th style="width:8%"><?php esc_html_e( 'WC Stock', 'woo-multi-stock' ); ?></th>
 						<?php foreach ( $warehouses as $wh ) : ?>
-							<th style="width:10%"><?php echo esc_html( $wh['label'] ); ?></th>
+							<th style="width:8%"><?php echo esc_html( $wh['label'] ); ?></th>
 						<?php endforeach; ?>
+						<th style="width:8%"><?php esc_html_e( 'Actions', 'woo-multi-stock' ); ?></th>
 					</tr>
 				</thead>
 				<tbody id="wms-stock-tbody">
 					<tr>
-						<td colspan="<?php echo 3 + count( $warehouses ); ?>" style="text-align:center;">
+						<td colspan="<?php echo 7 + count( $warehouses ); ?>" style="text-align:center;">
 							<?php esc_html_e( 'Loading…', 'woo-multi-stock' ); ?>
 						</td>
 					</tr>

@@ -1,5 +1,5 @@
 /**
- * Woo Multi Stock — Admin Script v1.1.0
+ * Woo Multi Stock — Admin Script v1.3.0
  *
  * Drives the multi-warehouse stock synchronisation UI on the plugin's admin page.
  *
@@ -10,9 +10,10 @@
  * B) Per-warehouse sync — each sync block has its own Download + Batch loop,
  *    progress bar and live counters.
  * C) Sync All — wms_total_prepare + wms_total_batch loop writes the sum of
- *    all _stock_* metas to WC _stock (does NOT re-download any CSV).
+ *    all _stock_* metas to WC _stock. Shows live Processed / Updated / Skipped
+ *    counters. Skips products whose stock has not changed.
  * D) Stock overview table — paginated (50/page) AJAX table with SKU search,
- *    built from the wms_stock_table_fetch response.
+ *    parent SKU column, per-row Sync button (wms_total_single).
  *
  * DATA CONTRACT (wmsData — injected by wp_localize_script)
  * ─────────────────────────────────────────────────────────
@@ -103,7 +104,6 @@
 			.done( function ( response ) {
 				if ( response.success ) {
 					$status.css( 'color', 'green' ).text( wmsData.i18n.savedOk );
-					// Update data-id on rows that got a server-assigned id.
 					var saved = response.data.warehouses || [];
 					$tbody.find( '.wms-wh-row' ).each( function ( i ) {
 						if ( saved[ i ] ) {
@@ -135,9 +135,6 @@
 
 	/**
 	 * Wire up one warehouse sync block.
-	 *
-	 * Each block maintains its own state so multiple warehouses can be synced
-	 * independently (though not simultaneously — the guard prevents that).
 	 *
 	 * @param {jQuery} $block  The .wms-sync-block element.
 	 */
@@ -308,25 +305,33 @@
 	// ═══════════════════════════════════════════════════════════════════════
 
 	function initSyncAll() {
-		var $btn    = $( '#wms-sync-all' );
-		var $wrap   = $( '#wms-syncall-wrap' );
-		var $bar    = $( '#wms-syncall-bar' );
-		var $text   = $( '#wms-syncall-text' );
-		var $status = $( '#wms-syncall-status' );
+		var $btn        = $( '#wms-sync-all' );
+		var $wrap       = $( '#wms-syncall-wrap' );
+		var $bar        = $( '#wms-syncall-bar' );
+		var $text       = $( '#wms-syncall-text' );
+		var $cProcessed = $( '#wms-syncall-c-processed' );
+		var $cUpdated   = $( '#wms-syncall-c-updated' );
+		var $cSkipped   = $( '#wms-syncall-c-skipped' );
+		var $status     = $( '#wms-syncall-status' );
 
-		var state = { running: false, total: 0, processed: 0, offset: 0 };
+		var state = { running: false, total: 0, processed: 0, updated: 0, skipped: 0, offset: 0 };
 
 		$btn.on( 'click', function () {
 			if ( state.running ) { return; }
 			state.running   = true;
 			state.total     = 0;
 			state.processed = 0;
+			state.updated   = 0;
+			state.skipped   = 0;
 			state.offset    = 0;
 
 			$btn.prop( 'disabled', true ).text( wmsData.i18n.calculating );
 			$wrap.show();
 			$bar.attr( { value: 0, max: 100 } );
 			$text.text( '0%' );
+			$cProcessed.text( '0' );
+			$cUpdated.text( '0' );
+			$cSkipped.text( '0' );
 			$status.html( '' ).removeClass( 'notice notice-success notice-error' );
 
 			prepareTotals();
@@ -375,6 +380,8 @@
 
 				var d = response.data;
 				state.processed += parseInt( d.processed, 10 ) || 0;
+				state.updated   += parseInt( d.updated,   10 ) || 0;
+				state.skipped   += parseInt( d.skipped,   10 ) || 0;
 				state.offset     = parseInt( d.next_offset, 10 ) || state.offset;
 
 				var pct = state.total > 0
@@ -382,6 +389,9 @@
 					: 0;
 				$bar.attr( { value: pct, max: 100 } );
 				$text.text( pct + '%' );
+				$cProcessed.text( state.processed );
+				$cUpdated.text( state.updated );
+				$cSkipped.text( state.skipped );
 
 				if ( d.is_done ) {
 					finishAll();
@@ -398,7 +408,12 @@
 			$bar.attr( { value: 100, max: 100 } );
 			$text.text( '100%' );
 
-			var summary = sprintfSimple( wmsData.i18n.calcSummary, state.processed );
+			var summary = sprintfSimple(
+				wmsData.i18n.calcSummaryFull,
+				state.processed,
+				state.updated,
+				state.skipped
+			);
 
 			$status
 				.addClass( 'notice notice-success' )
@@ -453,7 +468,6 @@
 			}
 		} );
 
-		// Warehouse filter dropdown: reset to page 1 on change.
 		$whFilter.on( 'change', function () {
 			currentPage = 1;
 			searchSku   = $searchIn.val().trim();
@@ -472,11 +486,53 @@
 			}
 		} );
 
+		// Per-row sync button (delegated — tbody is rebuilt on every page load).
+		$tbody.on( 'click', '.wms-row-sync', function () {
+			var $btn = $( this );
+			var productId = parseInt( $btn.data( 'id' ), 10 );
+
+			if ( ! productId || $btn.prop( 'disabled' ) ) { return; }
+
+			$btn.prop( 'disabled', true ).text( wmsData.i18n.rowSyncing );
+
+			$.ajax( {
+				url   : wmsData.ajaxUrl,
+				method: 'POST',
+				data  : {
+					action    : 'wms_total_single',
+					nonce     : wmsData.nonce,
+					product_id: productId,
+				},
+			} )
+			.done( function ( response ) {
+				if ( ! response.success ) {
+					$btn.text( extractMessage( response ) || wmsData.i18n.rowSyncBtn );
+					$btn.prop( 'disabled', false );
+					return;
+				}
+
+				var d       = response.data;
+				var wasSkip = ( parseInt( d.skipped, 10 ) > 0 );
+
+				// Update the WC Stock cell in the same row.
+				$btn.closest( 'tr' ).find( '.wms-wc-stock' ).text( parseInt( d.wc_stock, 10 ) );
+
+				$btn.text( wasSkip ? wmsData.i18n.rowSkipped : wmsData.i18n.rowSynced );
+
+				setTimeout( function () {
+					$btn.prop( 'disabled', false ).text( wmsData.i18n.rowSyncBtn );
+				}, 1500 );
+			} )
+			.fail( function () {
+				$btn.prop( 'disabled', false ).text( wmsData.i18n.rowSyncBtn );
+			} );
+		} );
+
 		function fetchPage( page, sku ) {
 			if ( loading ) { return; }
 			loading = true;
 
-			var colCount = 3 + ( wmsData.warehouses ? wmsData.warehouses.length : 0 );
+			var colCount = 7 + ( wmsData.warehouses ? wmsData.warehouses.length : 0 );
 			$tbody.html( '<tr><td colspan="' + colCount + '" style="text-align:center">' + escHtml( wmsData.i18n.loading ) + '</td></tr>' );
 			$prevBtn.prop( 'disabled', true );
 			$nextBtn.prop( 'disabled', true );
@@ -500,31 +556,60 @@
 					return;
 				}
 
-				var d           = response.data;
-				currentPage     = d.current_page;
-				totalPages      = d.total_pages || 1;
-				var rows        = d.rows || [];
-				var labels      = d.warehouse_labels || [];
+				var d       = response.data;
+				currentPage = d.current_page;
+				totalPages  = d.total_pages || 1;
+				var rows    = d.rows || [];
+				var labels  = d.warehouse_labels || [];
 
 				// Rebuild thead columns to match the labels returned by the server.
 				rebuildThead( labels );
 
 				if ( rows.length === 0 ) {
-					$tbody.html( '<tr><td colspan="' + ( 3 + labels.length ) + '" style="text-align:center">' + escHtml( wmsData.i18n.noResults ) + '</td></tr>' );
+					$tbody.html( '<tr><td colspan="' + ( 7 + labels.length ) + '" style="text-align:center">' + escHtml( wmsData.i18n.noResults ) + '</td></tr>' );
 				} else {
 					var html = '';
 					for ( var i = 0; i < rows.length; i++ ) {
 						var row = rows[ i ];
 						html += '<tr>';
+
+						// Product/variation ID.
+						html += '<td><code>' + parseInt( row.id, 10 ) + '</code></td>';
+
+						// Language (from WPML). Empty when WPML isn't installed.
+						html += '<td>' + ( row.language ? escHtml( row.language ) : '' ) + '</td>';
+
+						// Parent SKU (only for variations).
+						html += '<td>';
+						if ( row.parent_sku ) {
+							html += '<code>' + escHtml( row.parent_sku ) + '</code>';
+						}
+						html += '</td>';
+
+						// Own SKU.
 						html += '<td><code>' + escHtml( row.sku ) + '</code></td>';
+
+						// Product / variation name.
 						html += '<td>' + escHtml( row.name ) + '</td>';
-						html += '<td style="text-align:right">' + parseInt( row.wc_stock, 10 ) + '</td>';
+
+						// WC Stock (class for in-place update by row-sync button).
+						html += '<td class="wms-wc-stock" style="text-align:right">' + parseInt( row.wc_stock, 10 ) + '</td>';
+
+						// Per-warehouse quantities.
 						for ( var j = 0; j < labels.length; j++ ) {
 							var qty = row.warehouses && row.warehouses[ labels[ j ] ] !== undefined
 								? parseInt( row.warehouses[ labels[ j ] ], 10 )
 								: 0;
 							html += '<td style="text-align:right">' + qty + '</td>';
 						}
+
+						// Actions: per-row sync button.
+						html += '<td style="text-align:center">';
+						html += '<button type="button" class="button button-small wms-row-sync" data-id="' + parseInt( row.id, 10 ) + '">';
+						html += escHtml( wmsData.i18n.rowSyncBtn );
+						html += '</button>';
+						html += '</td>';
+
 						html += '</tr>';
 					}
 					$tbody.html( html );
@@ -545,14 +630,17 @@
 		}
 
 		function rebuildThead( labels ) {
-			// $thead is the <thead> element; set its innerHTML to a valid <tr>.
 			var html = '<tr>';
-			html += '<th style="width:14%">SKU</th>';
+			html += '<th style="width:6%">' + escHtml( wmsData.i18n.colId || 'ID' ) + '</th>';
+			html += '<th style="width:5%">' + escHtml( wmsData.i18n.colLang || 'Lang' ) + '</th>';
+			html += '<th style="width:10%">' + escHtml( wmsData.i18n.parentSku || 'Parent SKU' ) + '</th>';
+			html += '<th style="width:12%">SKU</th>';
 			html += '<th>Product / Variation</th>';
-			html += '<th style="width:10%">WC Stock</th>';
+			html += '<th style="width:8%">WC Stock</th>';
 			for ( var i = 0; i < labels.length; i++ ) {
-				html += '<th style="width:10%">' + escHtml( labels[ i ] ) + '</th>';
+				html += '<th style="width:8%">' + escHtml( labels[ i ] ) + '</th>';
 			}
+			html += '<th style="width:8%">' + escHtml( wmsData.i18n.actions || 'Actions' ) + '</th>';
 			html += '</tr>';
 			$thead.html( html );
 		}

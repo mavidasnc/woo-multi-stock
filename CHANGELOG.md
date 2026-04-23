@@ -11,6 +11,49 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.4.1] — 2026-04-22
+
+### Changed
+- **`Total_Updater::collect_ids()` — filtro lingua italiana con WPML**: quando WPML è attivo, la query di raccolta ID aggiunge un `INNER JOIN` su `wp_icl_translations` filtrato per `language_code = 'it'`. Sync All elabora così solo i prodotti italiani (sorgente dello stock), evitando di riscrivere le stesse quantità sulle copie tradotte e dimezzando il numero di ID da processare.
+
+---
+
+## [1.4.0] — 2026-04-22
+
+### Fixed
+- **WPML/WCML — sincronizzazione multilingue**: in install con WPML + WooCommerce Multilingual ogni traduzione di un prodotto è un post separato che condivide lo stesso `_sku`. La precedente `Stock_Updater::update()` usava `wc_get_product_id_by_sku()`, filtrato da WCML per la sola lingua admin corrente, e le traduzioni restavano con lo stock non aggiornato. `Stock_Updater` ora esegue una query diretta su `postmeta` (`find_product_ids_by_sku()`) e scrive il meta `_stock_{LABEL}` su **tutti** i post che condividono lo SKU, indipendentemente dalla lingua. Il hook `woo_multi_stock_after_row_update` si innesca una volta per ciascun post aggiornato. Funziona identicamente quando WPML non è installato (restituisce un singolo ID).
+
+### Added
+- **Colonna ID** come prima colonna della tabella Stock Overview: mostra il `post_id` di prodotto o variazione per riferimento rapido.
+- **Colonna Lingua** nella tabella Stock Overview, visibile solo se WPML è rilevato: mostra il codice lingua (`IT`, `EN`, …) derivato da `wp_icl_translations.language_code` via LEFT JOIN nella query di pagina. Il flag `wpml_active` è restituito dall'AJAX `wms_stock_table_fetch` e il frontend mostra/nasconde la colonna di conseguenza.
+- `Stock_Table::is_wpml_available()` — helper statico cached che verifica l'esistenza di `{prefix}icl_translations` (controlla la tabella reale, non la classe/costante WPML, così resta corretto anche se WPML è temporaneamente disattivato).
+
+### Changed
+- **Tabella Stock Overview — prodotti padre variabili nascosti**: la query aggiunge un `NOT EXISTS` sulla relazione `post_parent` → `product_variation` in stato non-cestino. I parent variabili non compaiono più fra le righe visibili perché sono ridondanti (le variazioni figlie portano lo stock reale). I prodotti semplici passano indenni.
+- Count delle colonne base aumentato da 5 a 7 (ID + Lang) in `rebuildThead()` e nel `colspan` dello stato di caricamento.
+
+### Notes
+- La somma dei magazzini e il calcolo `Total_Updater` restano per-post: ogni traduzione viene elaborata individualmente e ottiene lo stesso valore di `_stock` perché le sue meta `_stock_*` sono state scritte identiche dallo `Stock_Updater`. Non c'è doppio conteggio.
+
+---
+
+## [1.3.0] — 2026-04-22
+
+### Added
+- **Colonna "Parent SKU"** nella tabella Stock Overview: per le variazioni (`product_variation`) viene mostrato lo SKU del prodotto padre come prima colonna. Per prodotti semplici la cella rimane vuota.
+- **Ricerca per SKU padre**: il filtro SKU nella tabella matcha ora sia lo SKU della riga sia lo SKU del prodotto padre, consentendo di trovare tutte le variazioni inserendo lo SKU del prodotto variabile.
+- **Pulsante "Sync" per riga**: ogni riga della tabella Stock Overview ha un nuovo pulsante che ricalcola lo stock WC (`_stock`) per il singolo prodotto sommando i meta `_stock_*` esistenti — senza scaricare alcun CSV. La cella WC Stock si aggiorna in-place al completamento. Nuovo AJAX action `wms_total_single` in `Total_Updater`.
+- **Contatori live per Sync All**: il blocco "Sync All → WC Stock" mostra ora tre contatori aggiornati in tempo reale — **Elaborati / Aggiornati / Skippati** — analoghi a quelli già presenti per la sincronizzazione per-magazzino.
+- **Skip ottimizzato in `Total_Updater::process_ids()`**: se la somma dei meta `_stock_*` è uguale al valore `_stock` corrente e il flag `manage_stock` non richiede aggiornamento, il prodotto viene saltato senza alcuna scrittura su DB. Questo evita chiamate superflue a `wc_update_product_stock()` (che triggera `wc_delete_product_transients()` ad ogni invocazione). Il return di `process_ids()` include ora il contatore `skipped` oltre a `processed` e `updated`.
+- WP-CLI `sync-total`: il messaggio di completamento include ora anche il conteggio dei prodotti skippati (`skipped: N`).
+
+### Changed
+- **`Stock_Table`**: rimpiazzato il triplo round-trip (WP_Query + `get_posts()` + postmeta) con due query SQL dirette: (1) una SELECT paginata con LEFT JOIN su `_sku` e parent `_sku` che restituisce ID, titolo, SKU e parent SKU in un colpo solo; (2) la query batched postmeta per `_stock` e `_stock_*`. Riduzione netta delle query da ~3 a 2 per pagina.
+- Il filtro per magazzino nella tabella ora usa un INNER JOIN invece di `meta_query`, eliminando un ulteriore passaggio WP_Query.
+- Colonna count nella `<tbody>` di caricamento aggiornata da `3 + count(warehouses)` a `5 + count(warehouses)` per le due nuove colonne (Parent SKU + Azioni).
+
+---
+
 ## [1.2.0] — 2026-04-14
 
 ### Added
@@ -89,7 +132,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/your-org/woo-multi-stock/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/your-org/woo-multi-stock/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/your-org/woo-multi-stock/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/your-org/woo-multi-stock/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/your-org/woo-multi-stock/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/your-org/woo-multi-stock/compare/v1.0.0...v1.0.1

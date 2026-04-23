@@ -3,7 +3,7 @@
  * Plugin Name:       Woo Multi Stock
  * Plugin URI:        https://github.com/your-org/woo-multi-stock
  * Description:       Synchronises warehouse stock quantities from remote CSV files to per-warehouse meta fields on WooCommerce products and variations. Supports multiple warehouses; aggregates totals into native WooCommerce stock.
- * Version:           1.2.0
+ * Version:           1.4.1
  * Author:            Mavida s.n.c.
  * Author URI:        https://mavida.com
  * License:           GPL-2.0-or-later
@@ -77,7 +77,7 @@ if ( version_compare( PHP_VERSION, '7.4', '<' ) ) {
 // Using the WMS_ prefix (Woo Multi Stock) to avoid collisions with other plugins.
 
 /** Plugin version — used for asset cache-busting. */
-define( 'WMS_VERSION', '1.2.0' );
+define( 'WMS_VERSION', '1.4.1' );
 
 /** Absolute path to the plugin directory, with trailing slash. */
 define( 'WMS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );

@@ -214,6 +214,7 @@ class CLI {
 		$progress        = \WP_CLI\Utils\make_progress_bar( 'Updating WooCommerce stock', $total );
 		$total_processed = 0;
 		$total_updated   = 0;
+		$total_skipped   = 0;
 		$offset          = 0;
 
 		while ( $offset < $total ) {
@@ -222,6 +223,7 @@ class CLI {
 
 			$total_processed += $stats['processed'];
 			$total_updated   += $stats['updated'];
+			$total_skipped   += $stats['skipped'];
 
 			for ( $i = 0; $i < $stats['processed']; $i++ ) {
 				$progress->tick();
@@ -234,9 +236,10 @@ class CLI {
 
 		\WP_CLI::success(
 			sprintf(
-				'Sync total complete — processed: %d, updated: %d.',
+				'Sync total complete — processed: %d, updated: %d, skipped: %d.',
 				$total_processed,
-				$total_updated
+				$total_updated,
+				$total_skipped
 			)
 		);
 	}

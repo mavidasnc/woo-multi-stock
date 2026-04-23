@@ -5,13 +5,14 @@
  * Serves the paginated stock overview table via AJAX.
  *
  * AJAX action: wms_stock_table_fetch
- * POST params: nonce, page (int ≥ 1), search_sku (string, optional)
+ * POST params: nonce, page (int ≥ 1), search_sku (string, optional),
+ *              warehouse_filter (string, optional warehouse id)
  *
  * Response JSON:
  * {
  *   rows: [
- *     { id: 123, sku: "01.02", name: "Product A", wc_stock: 10,
- *       warehouses: { CMT: 8, WH2: 2 } }
+ *     { id: 123, sku: "01.02", parent_sku: "01", name: "Variation A",
+ *       wc_stock: 10, warehouses: { CMT: 8, WH2: 2 } }
  *   ],
  *   total_rows:       5200,
  *   total_pages:      104,
@@ -21,12 +22,17 @@
  *
  * PERFORMANCE
  * ───────────
- * With ~5200 variations, naive row-by-row queries would be catastrophic.
- * This class uses two queries per page:
- *  1. WP_Query with 'fields' => 'ids' — returns only post IDs for the
- *     current page. No WP_Post objects are loaded.
- *  2. One raw SQL query on postmeta for all IDs in the current batch,
- *     fetching only the meta keys we care about (_sku, _stock, _stock_*).
+ * Two queries per page (down from three in the previous WP_Query approach):
+ *  1. One raw SQL query that returns IDs, titles, SKUs, and parent SKUs for
+ *     the current page. LEFT JOINs on postmeta for _sku and parent _sku allow
+ *     searching both in a single pass. INNER JOIN replaces the meta_query
+ *     warehouse filter, avoiding a second WP_Query.
+ *  2. One batched postmeta query fetching _stock and all _stock_* keys for
+ *     the page's IDs.
+ *
+ * Searching by parent SKU is supported: the WHERE clause ORs over both
+ * the variation's own _sku and the parent post's _sku, so entering a
+ * parent SKU returns all its variations.
  *
  * @package WooMultiStock
  */
@@ -47,6 +53,9 @@ class Stock_Table {
 
 	/** @var int Rows returned per page. */
 	private const PAGE_SIZE = 50;
+
+	/** @var bool|null Cached WPML availability flag. */
+	private static $wpml_available = null;
 
 	// ── Public API ────────────────────────────────────────────────────────────
 
@@ -84,7 +93,6 @@ class Stock_Table {
 			? sanitize_title( wp_unslash( (string) $_POST['warehouse_filter'] ) )
 			: '';
 
-		// Get warehouse labels for the response header.
 		$wm               = new Warehouse_Manager();
 		$warehouses       = $wm->get_all();
 		$warehouse_labels = array();
@@ -92,133 +100,228 @@ class Stock_Table {
 			$warehouse_labels[] = $wh['label'];
 		}
 
-		// Query product/variation IDs for this page.
-		$query_result = $this->query_products( $page, $search_sku, $warehouse_filter );
-		$post_ids     = $query_result['ids'];
-		$total_rows   = $query_result['total'];
-		$total_pages  = $query_result['pages'];
+		$wpml_active = self::is_wpml_available();
 
-		// Build rows with a single batched meta query.
+		// Single SQL query: count + page rows (with parent_sku and optional language).
+		$result    = $this->query_table_page( $page, $search_sku, $warehouse_filter, $wpml_active );
+		$post_ids  = $result['post_ids'];
+		$base_rows = $result['base_rows'];
+		$total     = $result['total'];
+		$pages     = $result['pages'];
+
+		// Enrich with _stock and per-warehouse metas (one batched query).
 		$rows = empty( $post_ids )
 			? array()
-			: $this->build_rows( $post_ids, $warehouse_labels );
+			: $this->enrich_rows_with_stock( $post_ids, $base_rows, $warehouse_labels );
 
 		wp_send_json_success(
 			array(
 				'rows'             => $rows,
-				'total_rows'       => $total_rows,
-				'total_pages'      => $total_pages,
+				'total_rows'       => $total,
+				'total_pages'      => $pages,
 				'current_page'     => $page,
 				'warehouse_labels' => $warehouse_labels,
+				'wpml_active'      => $wpml_active,
 			)
 		);
+	}
+
+	/**
+	 * Detect whether WPML's translation table is present in this install.
+	 *
+	 * Checks the actual DB table rather than class/constant existence so the
+	 * result stays correct even if WPML is temporarily deactivated but the
+	 * translation data is still in place.
+	 *
+	 * @return bool True when {prefix}icl_translations exists.
+	 */
+	private static function is_wpml_available(): bool {
+		if ( null !== self::$wpml_available ) {
+			return self::$wpml_available;
+		}
+
+		global $wpdb;
+		$table = $wpdb->prefix . 'icl_translations';
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+		$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+
+		self::$wpml_available = ( $found === $table );
+
+		return self::$wpml_available;
 	}
 
 	// ── Private helpers ───────────────────────────────────────────────────────
 
 	/**
-	 * Run a WP_Query for product and variation IDs.
+	 * Run a unified SQL query for one table page.
 	 *
-	 * Uses 'fields' => 'ids' to avoid loading WP_Post objects.
-	 * SKU search is done via a postmeta LIKE query which is acceptable for
-	 * ~5200 rows — the postmeta table is indexed on (post_id, meta_key).
+	 * Returns IDs, titles, SKUs, and parent SKUs in a single round trip,
+	 * eliminating the WP_Query + get_posts two-step of the previous version.
 	 *
-	 * When warehouse_filter is provided, only products/variations with
-	 * qty > 0 in that warehouse's meta field are returned.
+	 * Search matches either the row's own _sku or the parent post's _sku, so
+	 * entering a variable product SKU returns all its child variations.
 	 *
 	 * @param int    $page             1-based page number.
 	 * @param string $search_sku       Optional SKU substring to filter by.
-	 * @param string $warehouse_filter Optional warehouse id to filter by (qty > 0).
-	 * @return array { ids: int[], total: int, pages: int }
+	 * @param string $warehouse_filter Optional warehouse id — only rows with qty > 0 in that warehouse.
+	 * @param bool   $wpml_active      When true, LEFT JOIN icl_translations and SELECT language_code.
+	 * @return array {
+	 *   @type int    total     Total matching rows (for pagination).
+	 *   @type int    pages     Total pages.
+	 *   @type int[]  post_ids  IDs in page order.
+	 *   @type array  base_rows Keyed by ID: { id, name, sku, parent_sku, language, wc_stock:0, warehouses:[] }.
+	 * }
 	 */
-	private function query_products( int $page, string $search_sku, string $warehouse_filter = '' ): array {
-		$args = array(
-			'post_type'      => array( 'product', 'product_variation' ),
-			'post_status'    => array( 'publish', 'private' ),
-			'fields'         => 'ids',
-			'posts_per_page' => self::PAGE_SIZE,
-			'paged'          => $page,
-			'orderby'        => 'ID',
-			'order'          => 'ASC',
-			'no_found_rows'  => false,
-		);
+	private function query_table_page( int $page, string $search_sku, string $warehouse_filter, bool $wpml_active ): array {
+		global $wpdb;
 
-		$meta_conditions = array();
+		$offset    = ( $page - 1 ) * self::PAGE_SIZE;
 
-		if ( '' !== $search_sku ) {
-			$meta_conditions[] = array(
-				'key'     => '_sku',
-				'value'   => $search_sku,
-				'compare' => 'LIKE',
-			);
+		// Hide variable product parents: any post_type='product' that has at least
+		// one child variation is redundant in the stock view since its children
+		// carry the actual per-variation stock. Simple products have no such
+		// children and pass through.
+		$where_sql = "p.post_type IN ('product','product_variation')
+		              AND p.post_status IN ('publish','private')
+		              AND NOT EXISTS (
+		                  SELECT 1 FROM {$wpdb->posts} c
+		                  WHERE c.post_parent = p.ID
+		                    AND c.post_type   = 'product_variation'
+		                    AND c.post_status NOT IN ('trash','auto-draft')
+		              )";
+
+		$params    = array();
+		$wh_join   = '';
+		$lang_select = '';
+		$lang_join   = '';
+
+		if ( $wpml_active ) {
+			$lang_select = ", tr.language_code AS language";
+			$lang_join   = "LEFT JOIN {$wpdb->prefix}icl_translations tr
+			                ON tr.element_id   = p.ID
+			                AND tr.element_type IN ('post_product','post_product_variation')";
 		}
 
+		// ── Optional warehouse filter via INNER JOIN ───────────────────────────
 		if ( '' !== $warehouse_filter ) {
 			$wm        = new Warehouse_Manager();
 			$warehouse = $wm->get_by_id( $warehouse_filter );
 			if ( false !== $warehouse ) {
-				$meta_conditions[] = array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
-					'key'     => Warehouse_Manager::get_meta_key( $warehouse ),
-					'value'   => 0,
-					'compare' => '>',
-					'type'    => 'NUMERIC',
+				$wh_meta_key = Warehouse_Manager::get_meta_key( $warehouse );
+				// Meta key is _stock_[A-Za-z0-9]+ — esc_sql is sufficient.
+				$wh_join = "INNER JOIN {$wpdb->postmeta} whf
+				            ON whf.post_id = p.ID
+				            AND whf.meta_key = '" . esc_sql( $wh_meta_key ) . "'
+				            AND CAST(whf.meta_value AS SIGNED) > 0";
+			}
+		}
+
+		// ── Optional SKU search (own SKU OR parent SKU) ───────────────────────
+		if ( '' !== $search_sku ) {
+			$like       = '%' . $wpdb->esc_like( $search_sku ) . '%';
+			$where_sql .= ' AND ( sku.meta_value LIKE %s OR psku.meta_value LIKE %s )';
+			$params[]   = $like;
+			$params[]   = $like;
+		}
+
+		// Shared FROM + JOINs fragment reused in both COUNT and SELECT queries.
+		// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$sql_from = "FROM {$wpdb->posts} p
+		             LEFT JOIN {$wpdb->postmeta} sku
+		               ON sku.post_id = p.ID AND sku.meta_key = '_sku'
+		             LEFT JOIN {$wpdb->postmeta} psku
+		               ON psku.post_id = p.post_parent AND psku.meta_key = '_sku'
+		             {$lang_join}
+		             {$wh_join}
+		             WHERE {$where_sql}";
+
+		// ── COUNT ─────────────────────────────────────────────────────────────
+		// phpcs:disable WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared
+		$count_sql = "SELECT COUNT(*) {$sql_from}";
+		if ( empty( $params ) ) {
+			$total = (int) $wpdb->get_var( $count_sql );
+		} else {
+			$total = (int) $wpdb->get_var( $wpdb->prepare( $count_sql, ...$params ) );
+		}
+		// phpcs:enable WordPress.DB.PreparedSQL.NotPrepared
+
+		$pages = ( $total > 0 ) ? (int) ceil( $total / self::PAGE_SIZE ) : 0;
+
+		if ( 0 === $total ) {
+			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.DirectDatabaseQuery
+			return array( 'total' => 0, 'pages' => 0, 'post_ids' => array(), 'base_rows' => array() );
+		}
+
+		// ── SELECT page rows ──────────────────────────────────────────────────
+		$select_params = array_merge( $params, array( self::PAGE_SIZE, $offset ) );
+		$rows_sql      = $wpdb->prepare(
+			"SELECT p.ID, p.post_type, p.post_title,
+			        sku.meta_value  AS sku,
+			        psku.meta_value AS parent_sku
+			        {$lang_select}
+			 {$sql_from}
+			 ORDER BY p.ID ASC
+			 LIMIT %d OFFSET %d",
+			...$select_params
+		);
+		$page_rows = $wpdb->get_results( $rows_sql, ARRAY_A );
+		// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.DirectDatabaseQuery
+
+		$post_ids  = array();
+		$base_rows = array();
+
+		if ( is_array( $page_rows ) ) {
+			foreach ( $page_rows as $r ) {
+				$id         = (int) $r['ID'];
+				$post_ids[] = $id;
+
+				$base_rows[ $id ] = array(
+					'id'         => $id,
+					'name'       => (string) $r['post_title'],
+					'sku'        => isset( $r['sku'] ) ? (string) $r['sku'] : '',
+					'parent_sku' => 'product_variation' === $r['post_type']
+					                ? ( isset( $r['parent_sku'] ) ? (string) $r['parent_sku'] : '' )
+					                : '',
+					'language'   => isset( $r['language'] ) ? strtoupper( (string) $r['language'] ) : '',
+					'wc_stock'   => 0,
+					'warehouses' => array(),
 				);
 			}
 		}
 
-		if ( ! empty( $meta_conditions ) ) {
-			$args['meta_query'] = array_merge( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
-				array( 'relation' => 'AND' ),
-				$meta_conditions
-			);
-		}
-
-		$query = new \WP_Query( $args );
-
-		$ids   = is_array( $query->posts ) ? array_map( 'intval', $query->posts ) : array();
-		$total = (int) $query->found_posts;
-		$pages = (int) $query->max_num_pages;
-
-		if ( 0 === $pages && $total > 0 ) {
-			$pages = 1;
-		}
-
 		return array(
-			'ids'   => $ids,
-			'total' => $total,
-			'pages' => $pages,
+			'total'     => $total,
+			'pages'     => $pages,
+			'post_ids'  => $post_ids,
+			'base_rows' => $base_rows,
 		);
 	}
 
 	/**
-	 * Build table row data for the given post IDs using a single SQL query.
+	 * Enrich base row data with _stock and per-warehouse meta values.
 	 *
-	 * Fetches _sku, _stock, and all _stock_{LABEL} meta keys in one round
-	 * trip to avoid N+1 queries. The warehouse_labels array tells us which
-	 * specific keys to include in the per-row "warehouses" map.
+	 * Uses a single batched postmeta query for all IDs on the page.
 	 *
-	 * @param int[]    $post_ids         Post IDs to build rows for.
-	 * @param string[] $warehouse_labels Labels of configured warehouses.
-	 * @return array[]  Each element: { id, sku, name, wc_stock, warehouses }.
+	 * @param int[]    $post_ids         IDs in display order.
+	 * @param array[]  $base_rows        Keyed by ID, from query_table_page().
+	 * @param string[] $warehouse_labels Configured warehouse labels.
+	 * @return array[]  Complete row maps ready for JSON output.
 	 */
-	private function build_rows( array $post_ids, array $warehouse_labels ): array {
+	private function enrich_rows_with_stock( array $post_ids, array $base_rows, array $warehouse_labels ): array {
 		global $wpdb;
 
-		// Build the list of meta keys we need.
-		$meta_keys = array( '_sku', '_stock' );
+		$meta_keys = array( '_stock' );
 		foreach ( $warehouse_labels as $label ) {
-			$safe       = preg_replace( '/[^A-Za-z0-9]/', '', $label );
+			$safe        = preg_replace( '/[^A-Za-z0-9]/', '', $label );
 			$meta_keys[] = '_stock_' . $safe;
 		}
 		$meta_keys = array_unique( $meta_keys );
 
-		// Build placeholders.
 		$id_placeholders  = implode( ',', array_map( 'intval', $post_ids ) );
 		$key_placeholders = implode( ',', array_fill( 0, count( $meta_keys ), '%s' ) );
 
-		// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-		// phpcs:disable WordPress.DB.DirectDatabaseQuery
-		$sql  = $wpdb->prepare(
+		// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.DirectDatabaseQuery
+		$sql       = $wpdb->prepare(
 			"SELECT post_id, meta_key, meta_value
 			 FROM {$wpdb->postmeta}
 			 WHERE post_id IN ({$id_placeholders})
@@ -228,7 +331,6 @@ class Stock_Table {
 		$meta_rows = $wpdb->get_results( $sql, ARRAY_A );
 		// phpcs:enable
 
-		// Index by post_id → key → value.
 		$meta_index = array();
 		if ( is_array( $meta_rows ) ) {
 			foreach ( $meta_rows as $mr ) {
@@ -236,41 +338,22 @@ class Stock_Table {
 			}
 		}
 
-		// Fetch post titles in bulk using get_posts.
-		$posts = get_posts(
-			array(
-				'post__in'       => $post_ids,
-				'post_type'      => array( 'product', 'product_variation' ),
-				'post_status'    => 'any',
-				'posts_per_page' => count( $post_ids ),
-				'orderby'        => 'post__in',
-			)
-		);
-
-		$title_index = array();
-		foreach ( $posts as $p ) {
-			$title_index[ $p->ID ] = $p->post_title;
-		}
-
-		// Assemble rows in the original query order.
 		$rows = array();
 		foreach ( $post_ids as $id ) {
-			$meta      = isset( $meta_index[ $id ] ) ? $meta_index[ $id ] : array();
+			$base       = isset( $base_rows[ $id ] ) ? $base_rows[ $id ] : array();
+			$meta       = isset( $meta_index[ $id ] ) ? $meta_index[ $id ] : array();
 			$warehouses = array();
 
 			foreach ( $warehouse_labels as $label ) {
-				$safe                  = preg_replace( '/[^A-Za-z0-9]/', '', $label );
-				$wh_key                = '_stock_' . $safe;
+				$safe                 = preg_replace( '/[^A-Za-z0-9]/', '', $label );
+				$wh_key               = '_stock_' . $safe;
 				$warehouses[ $label ] = isset( $meta[ $wh_key ] ) ? (int) $meta[ $wh_key ] : 0;
 			}
 
-			$rows[] = array(
-				'id'         => $id,
-				'sku'        => isset( $meta['_sku'] ) ? $meta['_sku'] : '',
-				'name'       => isset( $title_index[ $id ] ) ? $title_index[ $id ] : '',
-				'wc_stock'   => isset( $meta['_stock'] ) ? (int) $meta['_stock'] : 0,
-				'warehouses' => $warehouses,
-			);
+			$base['wc_stock']   = isset( $meta['_stock'] ) ? (int) $meta['_stock'] : 0;
+			$base['warehouses'] = $warehouses;
+
+			$rows[] = $base;
 		}
 
 		return $rows;
