@@ -309,3 +309,11 @@ msgstr ""
 #: includes/Class-Admin.php
 msgid "All warehouses"
 msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Force backorders on all products"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Forces backorders, stock management, and availability via WooCommerce runtime filters — without writing to the database. Survives any product update by an external tool."
+msgstr ""

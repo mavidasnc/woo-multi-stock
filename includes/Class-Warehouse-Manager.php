@@ -58,6 +58,9 @@ class Warehouse_Manager {
 	/** @var string wp_options key for the warehouses array. */
 	public const OPTION_KEY = 'woo_multi_stock_warehouses';
 
+	/** @var string wp_options key for the force-backorders global toggle. */
+	public const OPTION_FORCE_BACKORDERS = 'woo_multi_stock_force_backorders';
+
 	/** @var string Legacy single-warehouse name option (read-only after migration). */
 	private const LEGACY_OPT_NAME = 'woo_multi_stock_warehouse_name';
 
@@ -171,6 +174,20 @@ class Warehouse_Manager {
 		return (bool) update_option( self::OPTION_KEY, $warehouses, false );
 	}
 
+	/**
+	 * Return whether the force-backorders toggle is currently active.
+	 *
+	 * Static so Backorder_Manager can call it without instantiating this class
+	 * (avoids a second object allocation on every frontend request).
+	 *
+	 * Default is 'no' (off) — the toggle must be explicitly enabled in the admin.
+	 *
+	 * @return bool
+	 */
+	public static function force_backorders(): bool {
+		return 'yes' === get_option( self::OPTION_FORCE_BACKORDERS, 'no' );
+	}
+
 	// ── Static helpers (used by Processor, Total_Updater, Stock_Table) ─────────
 
 	/**
@@ -276,6 +293,12 @@ class Warehouse_Manager {
 
 		// ── Persist ───────────────────────────────────────────────────────────
 		$this->save_all( $warehouses );
+
+		// Save the force-backorders toggle alongside the warehouses.
+		// Nonce and capability are already verified above (lines 216–223).
+		$raw_force        = isset( $_POST['force_backorders'] ) ? sanitize_key( wp_unslash( $_POST['force_backorders'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$force_backorders = 'true' === $raw_force;
+		update_option( self::OPTION_FORCE_BACKORDERS, $force_backorders ? 'yes' : 'no', false );
 
 		wp_send_json_success( array( 'warehouses' => $warehouses ) );
 	}

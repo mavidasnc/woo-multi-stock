@@ -51,6 +51,9 @@
 		var $saveBtn = $( '#wms-save-warehouses' );
 		var $status  = $( '#wms-save-status' );
 
+		// Restore the force-backorders toggle from the server-side option.
+		$( '#wms-force-backorders' ).prop( 'checked', !!wmsData.forceBackorders );
+
 		// Live meta-key preview when the user types in a label input.
 		$tbody.on( 'input', '.wms-wh-label', function () {
 			var label   = $( this ).val();
@@ -96,9 +99,10 @@
 				url   : wmsData.ajaxUrl,
 				method: 'POST',
 				data  : {
-					action    : 'wms_save_warehouses',
-					nonce     : wmsData.nonce,
-					warehouses: JSON.stringify( warehouses ),
+					action          : 'wms_save_warehouses',
+					nonce           : wmsData.nonce,
+					warehouses      : JSON.stringify( warehouses ),
+					force_backorders: String( $( '#wms-force-backorders' ).is( ':checked' ) ),
 				},
 			} )
 			.done( function ( response ) {

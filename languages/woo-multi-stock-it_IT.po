@@ -309,3 +309,11 @@ msgstr "Non hai i permessi per eseguire questa azione."
 #: includes/Class-Admin.php
 msgid "All warehouses"
 msgstr "Tutti i magazzini"
+
+#: includes/Class-Admin.php
+msgid "Force backorders on all products"
+msgstr "Forza backorder su tutti i prodotti"
+
+#: includes/Class-Admin.php
+msgid "Forces backorders, stock management, and availability via WooCommerce runtime filters — without writing to the database. Survives any product update by an external tool."
+msgstr "Forza backorder, gestione stock e disponibilità tramite filtri WooCommerce a runtime — senza scrivere nel database. Sopravvive a qualsiasi aggiornamento prodotti da uno strumento esterno."

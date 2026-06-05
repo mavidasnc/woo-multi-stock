@@ -3,7 +3,7 @@
  * Plugin Name:       Woo Multi Stock
  * Plugin URI:        https://github.com/your-org/woo-multi-stock
  * Description:       Synchronises warehouse stock quantities from remote CSV files to per-warehouse meta fields on WooCommerce products and variations. Supports multiple warehouses; aggregates totals into native WooCommerce stock.
- * Version:           1.4.1
+ * Version:           1.5.0
  * Author:            Mavida s.n.c.
  * Author URI:        https://mavida.com
  * License:           GPL-2.0-or-later
@@ -77,7 +77,7 @@ if ( version_compare( PHP_VERSION, '7.4', '<' ) ) {
 // Using the WMS_ prefix (Woo Multi Stock) to avoid collisions with other plugins.
 
 /** Plugin version — used for asset cache-busting. */
-define( 'WMS_VERSION', '1.4.1' );
+define( 'WMS_VERSION', '1.5.0' );
 
 /** Absolute path to the plugin directory, with trailing slash. */
 define( 'WMS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
@@ -208,6 +208,12 @@ add_action(
 		// first migration (checks for option existence before writing).
 		$warehouse_manager = new \WooMultiStock\Warehouse_Manager();
 		$warehouse_manager->maybe_migrate();
+
+		// Backorder forcing — runtime WooCommerce property filters.
+		// Registered outside is_admin() so they apply on the frontend, in cart /
+		// checkout, and in REST API responses. The class self-checks the toggle
+		// option and exits immediately when the feature is disabled (zero overhead).
+		( new \WooMultiStock\Backorder_Manager() )->register_hooks();
 
 		// WP-CLI commands — registered outside is_admin() because WP-CLI returns
 		// false for is_admin() in CLI context. The @when after_wp_load annotation

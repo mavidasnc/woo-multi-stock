@@ -11,6 +11,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.5.0] — 2026-06-05
+
+### Added
+- **`Backorder_Manager` class** (`includes/Class-Backorder-Manager.php`): forza backorder, gestione stock e disponibilità su tutti i prodotti WooCommerce tramite filtri a runtime, **senza scrivere nel database**. Sopravvive a qualsiasi aggiornamento prodotti effettuato da strumenti esterni.
+  - Filtri su `woocommerce_product_get_backorders`, `woocommerce_product_variation_get_backorders` → `'yes'`.
+  - Filtri su `woocommerce_product_get_manage_stock`, `woocommerce_product_variation_get_manage_stock` → `true`.
+  - Filtri su `woocommerce_product_get_stock_status`, `woocommerce_product_variation_get_stock_status` → `'onbackorder'` (rende acquistabili anche i prodotti marcati `outofstock` dallo strumento esterno).
+  - Safety-net diretti su `woocommerce_product_is_in_stock` e `woocommerce_product_backorders_allowed`.
+  - Tutti i filtri a priorità 99; zero hook registrati quando la funzione è disattivata.
+- **Toggle admin** nella sezione "Configurazione Magazzini" ("Force backorders on all products"): checkbox che persiste in `woo_multi_stock_force_backorders` (`'yes'`/`'no'`), salvato insieme alla lista magazzini via `wms_save_warehouses`. Default: disattivato.
+- **`Warehouse_Manager::force_backorders()` (static)**: getter dell'opzione, usato sia da `Backorder_Manager` che dalla localizzazione JS.
+- **Filtro sviluppatore `wms_force_backorders`** (`apply_filters( 'wms_force_backorders', true, $product )`): permette di escludere singoli prodotti dal forzamento tramite codice esterno, senza modificare il plugin.
+- Traduzione IT aggiornata con 2 nuove stringhe; `.pot`, `.po`, `.mo` rigenerati (64 stringhe totali).
+
+---
+
 ## [1.4.1] — 2026-04-22
 
 ### Changed
@@ -132,7 +148,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/your-org/woo-multi-stock/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/your-org/woo-multi-stock/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/your-org/woo-multi-stock/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/your-org/woo-multi-stock/compare/v1.2.0...v1.3.0
