@@ -11,6 +11,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.5.1] — 2026-06-05
+
+### Fixed
+- **Toggle "Force backorders" non salvato**: il campo `force_backorders` veniva inviato dal JS come stringa `'true'`/`'false'` e confrontato in PHP con `sanitize_key()` + `=== 'true'` — approccio fragile. Sostituito con `'1'`/`'0'` (pattern standard WordPress): JS invia `? '1' : '0'`, PHP confronta con `=== '1'`.
+- **Posizione checkbox admin**: il toggle "Force backorders on all products" spostato sopra i bottoni "Aggiungi magazzino" / "Salva configurazione", così è visibile e incluso nel salvataggio prima di cliccare il pulsante.
+
+---
+
 ## [1.5.0] — 2026-06-05
 
 ### Added
@@ -148,7 +156,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/your-org/woo-multi-stock/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/your-org/woo-multi-stock/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/your-org/woo-multi-stock/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/your-org/woo-multi-stock/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/your-org/woo-multi-stock/compare/v1.3.0...v1.4.0

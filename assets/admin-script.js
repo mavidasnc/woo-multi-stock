@@ -102,7 +102,7 @@
 					action          : 'wms_save_warehouses',
 					nonce           : wmsData.nonce,
 					warehouses      : JSON.stringify( warehouses ),
-					force_backorders: String( $( '#wms-force-backorders' ).is( ':checked' ) ),
+					force_backorders: $( '#wms-force-backorders' ).is( ':checked' ) ? '1' : '0',
 				},
 			} )
 			.done( function ( response ) {

@@ -295,9 +295,9 @@ class Warehouse_Manager {
 		$this->save_all( $warehouses );
 
 		// Save the force-backorders toggle alongside the warehouses.
-		// Nonce and capability are already verified above (lines 216–223).
-		$raw_force        = isset( $_POST['force_backorders'] ) ? sanitize_key( wp_unslash( $_POST['force_backorders'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
-		$force_backorders = 'true' === $raw_force;
+		// Nonce and capability are already verified above.
+		// JS sends '1' (checked) or '0' (unchecked) — strict comparison is the sanitization.
+		$force_backorders = isset( $_POST['force_backorders'] ) && '1' === (string) wp_unslash( $_POST['force_backorders'] ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		update_option( self::OPTION_FORCE_BACKORDERS, $force_backorders ? 'yes' : 'no', false );
 
 		wp_send_json_success( array( 'warehouses' => $warehouses ) );

@@ -224,6 +224,16 @@ class Admin {
 				</tbody>
 			</table>
 
+			<p style="margin-top:14px;">
+				<label>
+					<input type="checkbox" id="wms-force-backorders">
+					<strong><?php esc_html_e( 'Force backorders on all products', 'woo-multi-stock' ); ?></strong>
+				</label>
+				<span class="description" style="display:block; margin-top:4px; margin-left:20px;">
+					<?php esc_html_e( 'Forces backorders, stock management, and availability via WooCommerce runtime filters — without writing to the database. Survives any product update by an external tool.', 'woo-multi-stock' ); ?>
+				</span>
+			</p>
+
 			<p style="margin-top:10px;">
 				<button type="button" class="button" id="wms-add-warehouse">
 					+ <?php esc_html_e( 'Add warehouse', 'woo-multi-stock' ); ?>
@@ -233,16 +243,6 @@ class Admin {
 					<?php esc_html_e( 'Save configuration', 'woo-multi-stock' ); ?>
 				</button>
 				<span id="wms-save-status" style="margin-left:10px;"></span>
-			</p>
-
-			<p style="margin-top:14px;">
-				<label>
-					<input type="checkbox" id="wms-force-backorders">
-					<strong><?php esc_html_e( 'Force backorders on all products', 'woo-multi-stock' ); ?></strong>
-				</label>
-				<span class="description" style="display:block; margin-top:4px; margin-left:20px;">
-					<?php esc_html_e( 'Forces backorders, stock management, and availability via WooCommerce runtime filters — without writing to the database. Survives any product update by an external tool.', 'woo-multi-stock' ); ?>
-				</span>
 			</p>
 
 			<hr>
