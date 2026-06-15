@@ -317,3 +317,80 @@ msgstr "Forza backorder su tutti i prodotti"
 #: includes/Class-Admin.php
 msgid "Forces backorders, stock management, and availability via WooCommerce runtime filters — without writing to the database. Survives any product update by an external tool."
 msgstr "Forza backorder, gestione stock e disponibilità tramite filtri WooCommerce a runtime — senza scrivere nel database. Sopravvive a qualsiasi aggiornamento prodotti da uno strumento esterno."
+
+#: includes/Class-Admin.php
+msgid "Settings"
+msgstr "Impostazioni"
+
+#: includes/Class-Admin.php
+msgid "GitHub"
+msgstr "GitHub"
+
+#: includes/Class-Admin.php
+msgid "Configuration & Sync"
+msgstr "Configurazione e sincronizzazione"
+
+#: includes/Class-Admin.php includes/Class-Updater.php
+msgid "Updates"
+msgstr "Aggiornamenti"
+
+#: includes/Class-Admin.php
+msgid "Checking for updates…"
+msgstr "Controllo aggiornamenti in corso…"
+
+#: includes/Class-Admin.php
+msgid "The plugin is up to date."
+msgstr "Il plugin è aggiornato."
+
+#. translators: %s: latest version number
+#: includes/Class-Admin.php
+msgid "A new version is available: %s"
+msgstr "È disponibile una nuova versione: %s"
+
+#: includes/Class-Admin.php
+msgid "Latest version:"
+msgstr "Ultima versione:"
+
+#: includes/Class-Admin.php
+msgid "Update now"
+msgstr "Aggiorna ora"
+
+#: includes/Class-Admin.php
+msgid "Changelog"
+msgstr "Changelog"
+
+#: includes/Class-Admin.php
+msgid "Unable to check for updates. Please retry later."
+msgstr "Impossibile controllare gli aggiornamenti. Riprova più tardi."
+
+#: includes/Class-Admin.php
+msgid "This plugin updates itself directly from its GitHub releases. Use the button below to check for a new version on demand; WordPress also checks automatically in the background."
+msgstr "Questo plugin si aggiorna direttamente dalle release GitHub. Usa il pulsante qui sotto per controllare una nuova versione su richiesta; WordPress controlla comunque automaticamente in background."
+
+#: includes/Class-Admin.php
+msgid "Installed version"
+msgstr "Versione installata"
+
+#: includes/Class-Admin.php
+msgid "Latest version"
+msgstr "Ultima versione"
+
+#: includes/Class-Admin.php
+msgid "Repository"
+msgstr "Repository"
+
+#: includes/Class-Admin.php
+msgid "Check for updates"
+msgstr "Controlla aggiornamenti"
+
+#: includes/Class-Updater.php
+msgid "Unable to rename the update package folder."
+msgstr "Impossibile rinominare la cartella del pacchetto di aggiornamento."
+
+#: includes/Class-Updater.php
+msgid "Insufficient permissions."
+msgstr "Permessi insufficienti."
+
+#: includes/Class-Updater.php
+msgid "Unable to contact GitHub. Please retry later."
+msgstr "Impossibile contattare GitHub. Riprova più tardi."

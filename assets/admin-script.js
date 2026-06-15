@@ -14,6 +14,8 @@
  *    counters. Skips products whose stock has not changed.
  * D) Stock overview table — paginated (50/page) AJAX table with SKU search,
  *    parent SKU column, per-row Sync button (wms_total_single).
+ * E) Tab navigation — client-side show/hide of the three admin panels.
+ * F) Updates tab — force a GitHub-release check via wms_check_update.
  *
  * DATA CONTRACT (wmsData — injected by wp_localize_script)
  * ─────────────────────────────────────────────────────────
@@ -35,10 +37,12 @@
 
 	// ── Bootstrap ───────────────────────────────────────────────────────────
 	$( function () {
+		initTabs();
 		initWarehouseManager();
 		initSyncBlocks();
 		initSyncAll();
 		initStockTable();
+		initUpdates();
 	} );
 
 	// ═══════════════════════════════════════════════════════════════════════
@@ -648,6 +652,131 @@
 			html += '</tr>';
 			$thead.html( html );
 		}
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// SECTION E — Tab navigation (client-side, no reload)
+	// ═══════════════════════════════════════════════════════════════════════
+
+	/**
+	 * Toggles the visible tab panel when a nav-tab is clicked. The target panel
+	 * id is taken from the link's href (e.g. "#wms-tab-stock"). On first load it
+	 * also restores the tab referenced by location.hash, if any.
+	 */
+	function initTabs() {
+		var $tabs = $( '.wms-nav-tabs .nav-tab' );
+
+		if ( ! $tabs.length ) { return; }
+
+		function activate( target ) {
+			var $panel = $( target );
+			if ( ! $panel.length ) { return; }
+
+			$tabs.removeClass( 'nav-tab-active' );
+			$tabs.filter( '[href="' + target + '"]' ).addClass( 'nav-tab-active' );
+
+			$( '.wms-tab-panel' ).hide();
+			$panel.show();
+		}
+
+		$tabs.on( 'click', function ( e ) {
+			e.preventDefault();
+			var target = $( this ).attr( 'href' );
+			activate( target );
+			// Keep the hash in sync so the tab survives a manual reload.
+			if ( window.history && window.history.replaceState ) {
+				window.history.replaceState( null, '', target );
+			}
+		} );
+
+		// Restore from hash (e.g. arriving via "#wms-tab-updates").
+		if ( window.location.hash && $( window.location.hash ).hasClass( 'wms-tab-panel' ) ) {
+			activate( window.location.hash );
+		}
+	}
+
+	// ═══════════════════════════════════════════════════════════════════════
+	// SECTION F — Updates tab (force check via GitHub releases)
+	// ═══════════════════════════════════════════════════════════════════════
+
+	/**
+	 * Wires the "Check for updates" button: calls wms_check_update, fills the
+	 * latest-version cell and renders an availability notice with the changelog.
+	 */
+	function initUpdates() {
+		var $btn = $( '#wms-check-update' );
+
+		if ( ! $btn.length ) { return; }
+
+		var i18n     = wmsData.i18n;
+		var $status  = $( '#wms-update-status' );
+		var $latest  = $( '#wms-latest-version' );
+		var $result  = $( '#wms-update-result' );
+
+		$btn.on( 'click', function () {
+			$btn.prop( 'disabled', true );
+			$status.text( i18n.checkingUpdate );
+			$result.empty();
+
+			$.post( wmsData.ajaxUrl, {
+				action: 'wms_check_update',
+				nonce: wmsData.nonce
+			} )
+				.done( function ( response ) {
+					if ( ! response || ! response.success || ! response.data ) {
+						$status.text( extractMessage( response ) || i18n.errorCheck );
+						return;
+					}
+
+					var d = response.data;
+					$status.text( '' );
+					$latest.text( d.latest );
+
+					if ( d.update_available ) {
+						$result.html( buildUpdateNotice( d ) );
+					} else {
+						$result.html(
+							'<div class="notice notice-success inline"><p>' +
+							escHtml( i18n.upToDate ) +
+							'</p></div>'
+						);
+					}
+				} )
+				.fail( function () {
+					$status.text( i18n.errorCheck );
+				} )
+				.always( function () {
+					$btn.prop( 'disabled', false );
+				} );
+		} );
+	}
+
+	/**
+	 * Builds the "new version available" notice with changelog + update button.
+	 *
+	 * @param {Object} d  Response data from wms_check_update.
+	 * @return {string}   HTML markup.
+	 */
+	function buildUpdateNotice( d ) {
+		var i18n    = wmsData.i18n;
+		var heading = i18n.updateAvailable.replace( '%s', escHtml( d.latest ) );
+
+		var html = '<div class="notice notice-warning inline"><p><strong>' + heading + '</strong></p>';
+
+		// Changelog is server-sanitised HTML (wp_kses_post) → inserted as-is.
+		if ( d.changelog ) {
+			html += '<details style="margin:6px 0;"><summary>' + escHtml( i18n.changelog ) +
+				'</summary><div class="wms-changelog">' + d.changelog + '</div></details>';
+		}
+
+		if ( d.upgrade_url ) {
+			html += '<p><a href="' + escAttr( d.upgrade_url ) +
+				'" class="button button-primary">' + escHtml( i18n.updateNow ) + '</a></p>';
+		}
+
+		html += '</div>';
+
+		return html;
 	}
 
 	// ═══════════════════════════════════════════════════════════════════════

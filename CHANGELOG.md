@@ -11,6 +11,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.7.0] — 2026-06-15
+
+### Added
+- **Aggiornamento automatico via GitHub Releases** (`includes/Class-Updater.php`): nuova classe `Updater` che integra il plugin con il sistema di update nativo di WordPress leggendo direttamente l'API delle release del repository pubblico `mavidasnc/woo-multi-stock`, **senza librerie esterne**.
+  - Interroga `/releases/latest` con caching in transient (`wms_github_release`, TTL 6 ore) e User-Agent obbligatorio; in caso di errore di rete o risposta non valida non genera avvisi né update fantasma.
+  - Inietta i dati di update nel transient `update_plugins` (hook `pre_set_site_transient_update_plugins`) solo se la release remota è maggiore di `WMS_VERSION`.
+  - Popup "Visualizza dettagli" via `plugins_api` con changelog dal corpo della release.
+  - `upgrader_source_selection` rinomina la cartella estratta dallo zipball (`owner-repo-<sha>`) nella cartella reale del plugin, così l'update reinstalla in-place senza duplicati.
+  - La cache si svuota dopo ogni update (`upgrader_process_complete`) e a ogni controllo manuale.
+- **Tab "Aggiornamenti"** nella pagina admin: mostra versione installata e ultima versione, link al repository, bottone **"Controlla aggiornamenti"** (AJAX `wms_check_update`) e avviso con changelog + link "Aggiorna ora" (flusso di update nativo) quando è disponibile una nuova versione.
+- **Pagina admin a 3 tab** (navigazione lato client, senza reload): Tab 1 _Configurazione & Sync_ (gestione magazzini + sincronizzazione), Tab 2 _Panoramica Stock_, Tab 3 _Aggiornamenti_.
+- **Link nella lista plugin di WordPress**: scorciatoia **Impostazioni** (azioni plugin) e link al repository **GitHub** (meta-link della riga).
+
+### Changed
+- Header `Plugin URI` allineato al repository reale (`https://github.com/mavidasnc/woo-multi-stock`), prima placeholder `your-org`.
+
+---
+
 ## [1.6.0] — 2026-06-15
 
 ### Added

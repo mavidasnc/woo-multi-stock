@@ -54,6 +54,50 @@ class Admin {
 	public function register_hooks(): void {
 		add_action( 'admin_menu',            array( $this, 'add_menu_page' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
+
+		// Link nella riga del plugin in WP → Plugin: "Impostazioni" + "GitHub".
+		$basename = plugin_basename( WMS_PLUGIN_FILE );
+		add_filter( 'plugin_action_links_' . $basename, array( $this, 'add_action_links' ) );
+		add_filter( 'plugin_row_meta', array( $this, 'add_row_meta' ), 10, 2 );
+	}
+
+	/**
+	 * Antepone un link "Impostazioni" tra le azioni del plugin nella lista.
+	 *
+	 * @param array $links Link azione esistenti.
+	 * @return array  Link con "Impostazioni" in testa.
+	 */
+	public function add_action_links( array $links ): array {
+		$settings_link = sprintf(
+			'<a href="%s">%s</a>',
+			esc_url( admin_url( 'admin.php?page=' . self::PAGE_SLUG ) ),
+			esc_html__( 'Settings', 'woo-multi-stock' )
+		);
+
+		array_unshift( $links, $settings_link );
+
+		return $links;
+	}
+
+	/**
+	 * Aggiunge un link al repository GitHub nei meta-link della riga plugin.
+	 *
+	 * @param array  $links Meta-link esistenti.
+	 * @param string $file  Plugin file corrente in iterazione.
+	 * @return array  Meta-link, con "GitHub" aggiunto solo per il nostro plugin.
+	 */
+	public function add_row_meta( array $links, string $file ): array {
+		if ( plugin_basename( WMS_PLUGIN_FILE ) !== $file ) {
+			return $links;
+		}
+
+		$links[] = sprintf(
+			'<a href="%s" target="_blank" rel="noopener noreferrer">%s</a>',
+			esc_url( 'https://github.com/mavidasnc/woo-multi-stock' ),
+			esc_html__( 'GitHub', 'woo-multi-stock' )
+		);
+
+		return $links;
 	}
 
 	// ── Hook callbacks ────────────────────────────────────────────────────────
@@ -150,6 +194,15 @@ class Admin {
 					'notFound'      => __( 'Not found:', 'woo-multi-stock' ),
 					'updated'       => __( 'Updated:', 'woo-multi-stock' ),
 					'skipped'       => __( 'Skipped:', 'woo-multi-stock' ),
+					// Updates tab.
+					'checkingUpdate'  => __( 'Checking for updates…', 'woo-multi-stock' ),
+					'upToDate'        => __( 'The plugin is up to date.', 'woo-multi-stock' ),
+					/* translators: %s: latest version number */
+					'updateAvailable' => __( 'A new version is available: %s', 'woo-multi-stock' ),
+					'latestVersion'   => __( 'Latest version:', 'woo-multi-stock' ),
+					'updateNow'       => __( 'Update now', 'woo-multi-stock' ),
+					'changelog'       => __( 'Changelog', 'woo-multi-stock' ),
+					'errorCheck'      => __( 'Unable to check for updates. Please retry later.', 'woo-multi-stock' ),
 				),
 			)
 		);
@@ -173,6 +226,22 @@ class Admin {
 		<div class="wrap">
 
 			<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
+
+			<?php /* ── Tab navigation ──────────────────────────────────────── */ ?>
+			<h2 class="nav-tab-wrapper wms-nav-tabs">
+				<a href="#wms-tab-config" class="nav-tab nav-tab-active">
+					<?php esc_html_e( 'Configuration & Sync', 'woo-multi-stock' ); ?>
+				</a>
+				<a href="#wms-tab-stock" class="nav-tab">
+					<?php esc_html_e( 'Stock Overview', 'woo-multi-stock' ); ?>
+				</a>
+				<a href="#wms-tab-updates" class="nav-tab">
+					<?php esc_html_e( 'Updates', 'woo-multi-stock' ); ?>
+				</a>
+			</h2>
+
+			<?php /* ── Tab 1: Configuration & Sync ───────────────────────── */ ?>
+			<div class="wms-tab-panel" id="wms-tab-config">
 
 			<?php /* ── Section A: Warehouse management ─────────────────────── */ ?>
 			<h2><?php esc_html_e( 'Warehouse Configuration', 'woo-multi-stock' ); ?></h2>
@@ -313,7 +382,10 @@ class Admin {
 				<div id="wms-syncall-status" style="margin-top:8px;"></div>
 			</div>
 
-			<hr>
+			</div><!-- #wms-tab-config -->
+
+			<?php /* ── Tab 2: Stock overview ─────────────────────────────── */ ?>
+			<div class="wms-tab-panel" id="wms-tab-stock" style="display:none;">
 
 			<?php /* ── Section C: Stock overview table ────────────────────── */ ?>
 			<h2><?php esc_html_e( 'Stock Overview', 'woo-multi-stock' ); ?></h2>
@@ -372,6 +444,48 @@ class Admin {
 					<?php esc_html_e( 'Next ►', 'woo-multi-stock' ); ?>
 				</button>
 			</div>
+
+			</div><!-- #wms-tab-stock -->
+
+			<?php /* ── Tab 3: Updates ─────────────────────────────────────── */ ?>
+			<div class="wms-tab-panel" id="wms-tab-updates" style="display:none;">
+
+				<h2><?php esc_html_e( 'Updates', 'woo-multi-stock' ); ?></h2>
+				<p class="description">
+					<?php esc_html_e( 'This plugin updates itself directly from its GitHub releases. Use the button below to check for a new version on demand; WordPress also checks automatically in the background.', 'woo-multi-stock' ); ?>
+				</p>
+
+				<table class="form-table" role="presentation">
+					<tbody>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Installed version', 'woo-multi-stock' ); ?></th>
+							<td><code><?php echo esc_html( WMS_VERSION ); ?></code></td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Latest version', 'woo-multi-stock' ); ?></th>
+							<td><code id="wms-latest-version">—</code></td>
+						</tr>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'Repository', 'woo-multi-stock' ); ?></th>
+							<td>
+								<a href="https://github.com/mavidasnc/woo-multi-stock" target="_blank" rel="noopener noreferrer">
+									mavidasnc/woo-multi-stock
+								</a>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+
+				<p style="margin-top:10px;">
+					<button type="button" class="button button-primary" id="wms-check-update">
+						<?php esc_html_e( 'Check for updates', 'woo-multi-stock' ); ?>
+					</button>
+					<span id="wms-update-status" style="margin-left:10px;"></span>
+				</p>
+
+				<div id="wms-update-result" style="margin-top:14px;"></div>
+
+			</div><!-- #wms-tab-updates -->
 
 		</div><!-- .wrap -->
 		<?php

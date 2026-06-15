@@ -1,9 +1,9 @@
 <?php
 /**
  * Plugin Name:       Woo Multi Stock
- * Plugin URI:        https://github.com/your-org/woo-multi-stock
+ * Plugin URI:        https://github.com/mavidasnc/woo-multi-stock
  * Description:       Synchronises warehouse stock quantities from remote CSV files to per-warehouse meta fields on WooCommerce products and variations. Supports multiple warehouses; aggregates totals into native WooCommerce stock.
- * Version:           1.6.0
+ * Version:           1.7.0
  * Author:            Mavida s.n.c.
  * Author URI:        https://mavida.com
  * License:           GPL-2.0-or-later
@@ -77,7 +77,7 @@ if ( version_compare( PHP_VERSION, '7.4', '<' ) ) {
 // Using the WMS_ prefix (Woo Multi Stock) to avoid collisions with other plugins.
 
 /** Plugin version — used for asset cache-busting. */
-define( 'WMS_VERSION', '1.6.0' );
+define( 'WMS_VERSION', '1.7.0' );
 
 /** Absolute path to the plugin directory, with trailing slash. */
 define( 'WMS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
@@ -214,6 +214,13 @@ add_action(
 		// checkout, and in REST API responses. The class self-checks the toggle
 		// option and exits immediately when the feature is disabled (zero overhead).
 		( new \WooMultiStock\Backorder_Manager() )->register_hooks();
+
+			// GitHub self-updater: registrato fuori da is_admin() perché il
+			// controllo aggiornamenti gira anche via WP-Cron (dove is_admin() è
+			// false). La classe interroga l'API GitHub solo quando WordPress legge
+			// il transient update_plugins, con caching, quindi zero overhead sulle
+			// richieste normali.
+			( new \WooMultiStock\Updater() )->register_hooks();
 
 		// WP-CLI commands — registered outside is_admin() because WP-CLI returns
 		// false for is_admin() in CLI context. The @when after_wp_load annotation

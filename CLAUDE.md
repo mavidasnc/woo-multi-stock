@@ -25,7 +25,7 @@ The main file is the only entry point. In order:
 2. Constants: `WMS_VERSION`, `WMS_PLUGIN_DIR`, `WMS_PLUGIN_URL`, `WMS_PLUGIN_FILE`, `WMS_TEXT_DOMAIN`
 3. Inline PSR-4 autoloader: `WooMultiStock\Foo` → `includes/Class-Foo.php` (underscores become hyphens)
 4. HPOS compatibility declaration (`before_woocommerce_init`)
-5. `plugins_loaded` at priority 11: WC guard → textdomain → `Warehouse_Manager::maybe_migrate()` → WP-CLI registration (if `WP_CLI` defined) → register hooks for all 5 classes (admin-only via `is_admin()`)
+5. `plugins_loaded` at priority 11: WC guard → textdomain → `Warehouse_Manager::maybe_migrate()` → `Backorder_Manager` + `Updater` registration (both outside `is_admin()`) → WP-CLI registration (if `WP_CLI` defined) → register hooks for the 5 admin classes (admin-only via `is_admin()`)
 
 ### Class responsibilities
 
@@ -37,6 +37,7 @@ The main file is the only entry point. In order:
 | `WooMultiStock\Warehouse_Manager` | `includes/Class-Warehouse-Manager.php` | CRUD for `woo_multi_stock_warehouses` option; lazy migration from legacy options; AJAX save |
 | `WooMultiStock\Total_Updater` | `includes/Class-Total-Updater.php` | `wms_total_prepare` + `wms_total_batch`: sums `_stock_*` metas → writes WC `_stock`; public `collect_ids()` + `process_ids()` for CLI reuse |
 | `WooMultiStock\Stock_Table` | `includes/Class-Stock-Table.php` | `wms_stock_table_fetch`: server-side paginated table (2 queries/page) |
+| `WooMultiStock\Updater` | `includes/Class-Updater.php` | GitHub Releases self-updater: injects into `update_plugins` transient, `plugins_api` details, `upgrader_source_selection` folder rename; `wms_check_update` AJAX for the Updates tab |
 | `WooMultiStock\CLI` | `includes/Class-CLI.php` | WP-CLI command group `wms`: `sync [--warehouse=<id\|all>]` and `sync-total` |
 
 ### Data model — warehouses
@@ -64,14 +65,17 @@ The main file is the only entry point. In order:
 | `wms_total_prepare` | `Total_Updater` | `nonce` | `{total:N}` |
 | `wms_total_batch` | `Total_Updater` | `nonce, offset` | `{processed, updated, next_offset, is_done, total}` |
 | `wms_stock_table_fetch` | `Stock_Table` | `nonce, page, search_sku` | `{rows, total_rows, total_pages, current_page, warehouse_labels}` |
+| `wms_check_update` | `Updater` | `nonce` | `{current, latest, update_available, changelog, html_url, published_at, upgrade_url}` |
 
 ### JS (`assets/admin-script.js`)
 
-IIFE + jQuery. Four sections:
+IIFE + jQuery. Six sections:
 - **A** Warehouse manager: add/remove rows in `#wms-warehouses-tbody`, live meta-key preview, save via `wms_save_warehouses`.
 - **B** Per-warehouse sync: each `.wms-sync-block[data-id]` has its own state object and async batch loop.
 - **C** Sync All: `wms_total_prepare` → `wms_total_batch` loop via `#wms-sync-all`.
 - **D** Stock table: paginated AJAX table with SKU search (`#wms-search-sku`), prev/next buttons.
+- **E** Tab navigation: client-side show/hide of the three admin panels (`.wms-nav-tabs .nav-tab` → `.wms-tab-panel`).
+- **F** Updates tab: `#wms-check-update` → `wms_check_update`, renders availability notice with changelog + native update link.
 
 Data contract: `wmsData` object — contains `ajaxUrl`, `nonce`, `batchSize`, `warehouses` (array), `i18n`.
 

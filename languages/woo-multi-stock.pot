@@ -317,3 +317,80 @@ msgstr ""
 #: includes/Class-Admin.php
 msgid "Forces backorders, stock management, and availability via WooCommerce runtime filters — without writing to the database. Survives any product update by an external tool."
 msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Settings"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "GitHub"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Configuration & Sync"
+msgstr ""
+
+#: includes/Class-Admin.php includes/Class-Updater.php
+msgid "Updates"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Checking for updates…"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "The plugin is up to date."
+msgstr ""
+
+#. translators: %s: latest version number
+#: includes/Class-Admin.php
+msgid "A new version is available: %s"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Latest version:"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Update now"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Changelog"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Unable to check for updates. Please retry later."
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "This plugin updates itself directly from its GitHub releases. Use the button below to check for a new version on demand; WordPress also checks automatically in the background."
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Installed version"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Latest version"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Repository"
+msgstr ""
+
+#: includes/Class-Admin.php
+msgid "Check for updates"
+msgstr ""
+
+#: includes/Class-Updater.php
+msgid "Unable to rename the update package folder."
+msgstr ""
+
+#: includes/Class-Updater.php
+msgid "Insufficient permissions."
+msgstr ""
+
+#: includes/Class-Updater.php
+msgid "Unable to contact GitHub. Please retry later."
+msgstr ""
