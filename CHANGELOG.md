@@ -11,6 +11,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.6.0] — 2026-06-15
+
+### Added
+- **Soppressione notifiche email di stock all'admin** (`includes/Class-Backorder-Manager.php`): con il forcing dei backorder attivo, ogni prodotto resta sempre acquistabile anche a stock 0, quindi le notifiche native di WooCommerce inviate all'admin (prodotto in arretrato / esaurito / scorte basse) sono solo rumore. Il nuovo callback `filter_email_actions()` rimuove le action `woocommerce_product_on_backorder`, `woocommerce_no_stock` e `woocommerce_low_stock` dalla lista `woocommerce_email_actions`, impedendo a WooCommerce di registrare quelle email transazionali.
+  - La soppressione è **legata al toggle**: il filtro viene registrato solo dentro `register_hooks()`, che esce subito quando il forcing è disattivato → spegnendo il toggle le email native tornano automaticamente (comportamento reversibile, zero overhead a feature spenta).
+  - Rispetta l'escape-hatch globale `wms_force_backorders` riusando `should_force( null )`.
+  - **Non tocca** la logica di vendita né le altre email d'ordine (nuovo ordine, processing, ecc.): quelle continuano ad arrivare normalmente.
+
+---
+
 ## [1.5.1] — 2026-06-05
 
 ### Fixed

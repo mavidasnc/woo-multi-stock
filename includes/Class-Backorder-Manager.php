@@ -11,6 +11,12 @@
  * Warehouse Configuration section. When the toggle is off this class registers
  * no hooks at all (zero overhead on every request).
  *
+ * With the forcing active every product is always purchasable in backorder, so
+ * the native WooCommerce admin stock notifications (backorder / out-of-stock /
+ * low-stock) become pure noise: this class also strips those actions from the
+ * 'woocommerce_email_actions' list. The suppression is bound to the toggle —
+ * turning the toggle off restores the native emails.
+ *
  * Developer escape-hatch: hook into 'wms_force_backorders' to exclude specific
  * products without modifying this plugin:
  *
@@ -66,6 +72,11 @@ class Backorder_Manager {
 		// woocommerce_product_backorders_allowed → ( bool, int id, WC_Product ) — 3 args.
 		add_filter( 'woocommerce_product_is_in_stock',        array( $this, 'filter_is_in_stock' ),        99, 2 );
 		add_filter( 'woocommerce_product_backorders_allowed', array( $this, 'filter_backorders_allowed' ),  99, 3 );
+
+		// Rimuove le notifiche email di stock all'admin (backorder / esaurito / scorte
+		// basse): con il forcing attivo ogni prodotto è sempre vendibile in backorder,
+		// quindi queste notifiche native sono solo rumore. Attivo solo a forcing acceso.
+		add_filter( 'woocommerce_email_actions', array( $this, 'filter_email_actions' ), 99 );
 	}
 
 	// ── Filter callbacks ──────────────────────────────────────────────────────
@@ -127,6 +138,30 @@ class Backorder_Manager {
 	 */
 	public function filter_backorders_allowed( $allowed, $product_id, $product ) {
 		return $this->should_force( $product ) ? true : $allowed;
+	}
+
+	/**
+	 * Rimuove le action delle notifiche di stock all'admin dalla lista delle
+	 * email transazionali di WooCommerce.
+	 *
+	 * @param array $actions Lista di action che innescano email transazionali.
+	 * @return array          Lista ripulita dalle notifiche di stock.
+	 */
+	public function filter_email_actions( $actions ) {
+		if ( ! $this->should_force( null ) ) {
+			return $actions;
+		}
+
+		return array_values(
+			array_diff(
+				$actions,
+				array(
+					'woocommerce_product_on_backorder',
+					'woocommerce_no_stock',
+					'woocommerce_low_stock',
+				)
+			)
+		);
 	}
 
 	// ── Private helpers ───────────────────────────────────────────────────────
