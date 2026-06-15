@@ -11,6 +11,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.7.1] — 2026-06-15
+
+### Fixed
+- **Cartelle versionate all'installazione manuale**: `Updater::fix_source_dir()` ora gestisce anche l'upload manuale dello zip della release (oltre all'update automatico). In quel contesto WordPress non fornisce il basename del plugin, quindi il pacchetto viene riconosciuto dalla presenza del file principale `woo-multi-stock.php` nella cartella estratta e rinominato in uno slug stabile (`woo-multi-stock`). Evita la creazione di cartelle versionate diverse (`woo-multi-stock-1.7.0`, `-1.7.1`, …) trattate come plugin distinti. L'update automatico continua a reinstallare in-place nella cartella esistente.
+
+---
+
 ## [1.7.0] — 2026-06-15
 
 ### Added

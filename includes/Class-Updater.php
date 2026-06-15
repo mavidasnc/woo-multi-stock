@@ -205,32 +205,54 @@ class Updater {
 	}
 
 	/**
-	 * Rinomina la cartella estratta dallo zipball nella cartella reale del plugin.
+	 * Rinomina la cartella estratta nella cartella corretta del plugin.
 	 *
-	 * Lo zipball GitHub si estrae in `owner-repo-<sha>/`, ma WordPress deve
-	 * reinstallare nella cartella esistente (es. `wp-multi-magazzino`). Senza
-	 * questa rinomina l'update creerebbe un plugin duplicato disattivato.
+	 * Gli archivi GitHub si estraggono in cartelle dal nome variabile:
+	 *  - zipball API (update automatico): `owner-repo-<sha>/`;
+	 *  - zip "Source code" della release (install manuale): `repo-<versione>/`.
+	 * In entrambi i casi WordPress, senza rinomina, creerebbe una cartella nuova
+	 * (e diversa a ogni versione) invece di reinstallare in-place.
+	 *
+	 * Due scenari gestiti:
+	 *  1. Update automatico — `$hook_extra['plugin']` contiene il nostro basename:
+	 *     rinominiamo nella cartella reale già installata (es. `wp-multi-magazzino`).
+	 *  2. Install manuale via upload zip — `$hook_extra['plugin']` è assente:
+	 *     riconosciamo il pacchetto dalla presenza del file principale e forziamo
+	 *     uno slug stabile (`woo-multi-stock`), così non si creano cartelle
+	 *     versionate a ogni upload.
 	 *
 	 * @param string $source        Path della cartella sorgente estratta.
 	 * @param string $remote_source Path della cartella temporanea contenitore.
 	 * @param object $upgrader      Istanza WP_Upgrader (non usata).
-	 * @param array  $hook_extra    Contesto: contiene `plugin` = basename.
+	 * @param array  $hook_extra    Contesto: contiene `plugin` = basename (solo in update).
 	 * @return string|\WP_Error  Nuovo path sorgente, o l'originale se non è il nostro.
 	 */
 	public function fix_source_dir( $source, $remote_source, $upgrader, $hook_extra ) {
 		global $wp_filesystem;
 
-		// Interveniamo solo sull'update di QUESTO plugin.
-		if ( empty( $hook_extra['plugin'] ) || $this->get_basename() !== $hook_extra['plugin'] ) {
-			return $source;
-		}
-
 		if ( ! $wp_filesystem ) {
 			return $source;
 		}
 
-		// Cartella di destinazione attesa da WordPress (es. "wp-multi-magazzino").
-		$desired_slug = dirname( $this->get_basename() );
+		if ( ! empty( $hook_extra['plugin'] ) ) {
+			// Scenario 1 — update di un plugin: interveniamo solo se è il nostro.
+			if ( $this->get_basename() !== $hook_extra['plugin'] ) {
+				return $source;
+			}
+			// Cartella reale del plugin già installato (es. "wp-multi-magazzino").
+			$desired_slug = dirname( $this->get_basename() );
+		} else {
+			// Scenario 2 — install manuale: nessun basename nel contesto. Riconosciamo
+			// il nostro pacchetto dalla presenza del file principale nella cartella
+			// estratta; in caso negativo non è roba nostra e lasciamo invariato.
+			$main_file = basename( WMS_PLUGIN_FILE ); // "woo-multi-stock.php"
+			if ( ! $wp_filesystem->exists( trailingslashit( $source ) . $main_file ) ) {
+				return $source;
+			}
+			// Slug stabile: evita cartelle versionate a ogni upload manuale.
+			$desired_slug = 'woo-multi-stock';
+		}
+
 		$desired_path = trailingslashit( $remote_source ) . $desired_slug;
 
 		// Già nel nome corretto: niente da fare.
